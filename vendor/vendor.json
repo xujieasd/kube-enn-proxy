@@ -1,0 +1,65 @@
+{
+	"comment": "",
+	"ignore": "test",
+	"package": [
+		{
+			"checksumSHA1": "jP1b0KH8gfvR6Fm9AYaDgU0UW6E=",
+			"path": "github.com/Sirupsen/logrus",
+			"revision": "7f976d3a76720c4c27af2ba716b85d2e0a7e38b1",
+			"revisionTime": "2017-07-10T14:32:56Z"
+		},
+		{
+			"checksumSHA1": "EEJLrzbX8DArnhEUS6kFKJiM48I=",
+			"path": "github.com/docker/libnetwork/ipvs",
+			"revision": "73cb0e2bd29bb8a4b16fabf5188a2d386faf93b1",
+			"revisionTime": "2017-07-11T06:38:10Z"
+		},
+		{
+			"checksumSHA1": "HmbftipkadrLlCfzzVQ+iFHbl6g=",
+			"path": "github.com/golang/glog",
+			"revision": "23def4e6c14b4da8ac2ed8007337bc5eb5007998",
+			"revisionTime": "2016-01-25T20:49:56Z"
+		},
+		{
+			"checksumSHA1": "STxYqRb4gnlSr3mRpT+Igfdz/kM=",
+			"path": "github.com/spf13/pflag",
+			"revision": "e57e3eeb33f795204c1ca35f56c44f83227c6e66",
+			"revisionTime": "2017-05-08T18:43:26Z"
+		},
+		{
+			"checksumSHA1": "ifpa+MndYQBW8BE+ccnI4Q6UsC0=",
+			"path": "github.com/vishvananda/netlink",
+			"revision": "8c5a115d793b6d223efadbdba04d1de197d386e8",
+			"revisionTime": "2017-07-07T08:19:10Z"
+		},
+		{
+			"checksumSHA1": "u2qHf8LtLUzS1StdX9GpOMAxjGU=",
+			"path": "github.com/vishvananda/netlink/nl",
+			"revision": "8c5a115d793b6d223efadbdba04d1de197d386e8",
+			"revisionTime": "2017-07-07T08:19:10Z"
+		},
+		{
+			"checksumSHA1": "YDN9yoXZ/KBWqILw9PCNtd/SRAI=",
+			"path": "github.com/vishvananda/netns",
+			"revision": "86bef332bfc3b59b7624a600bd53009ce91a9829",
+			"revisionTime": "2017-07-07T00:42:18Z"
+		},
+		{
+			"path": "golang.org/x/sys/unix",
+			"revision": ""
+		},
+		{
+			"checksumSHA1": "4f57DdnzXvjDNCVZk4uV9ltx3I8=",
+			"path": "k8s.io/apimachinery",
+			"revision": "21de1bffe600f61f4873ae774a60f7a7d37ac9bf",
+			"revisionTime": "2017-07-06T23:48:30Z"
+		},
+		{
+			"checksumSHA1": "gjbPrvT1cL7W8hUkTLMaukWpOcM=",
+			"path": "k8s.io/client-go",
+			"revision": "53c7adfd0294caa142d961e1f780f74081d5b15f",
+			"revisionTime": "2017-07-11T23:59:49Z"
+		}
+	],
+	"rootPath": "kube-enn-proxy"
+}
