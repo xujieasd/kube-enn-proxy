@@ -1,10 +1,12 @@
 package main
 
 import (
-	"flag"
+	//"flag"
 	"fmt"
 	"os"
 
+	"kube-enn-proxy/app"
+	"kube-enn-proxy/app/options"
 	"github.com/spf13/pflag"
 )
 
@@ -13,7 +15,7 @@ func main() {
 	config.AddFlags(pflag.CommandLine)
 
 
-	s, err := app.NewEnnProxyServerDefaul(config)
+	s, err := app.NewEnnProxyServerDefault(config)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Ennproxy config error: %v\n", err)
 		os.Exit(1)
@@ -23,5 +25,6 @@ func main() {
 		fmt.Fprintf(os.Stderr, "Ennproxy run error: %v\n", err)
 		os.Exit(1)
 	}
+
 
 }

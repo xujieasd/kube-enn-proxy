@@ -21,6 +21,24 @@
 			"revisionTime": "2016-01-25T20:49:56Z"
 		},
 		{
+			"checksumSHA1": "KwhF/QG2xizyHFIG5B4uCTSUr8E=",
+			"path": "github.com/hkwi/nlgo",
+			"revision": "dbae43f4fc47bf868bca3cc3c1ea2954c2059842",
+			"revisionTime": "2017-06-29T05:51:17Z"
+		},
+		{
+			"checksumSHA1": "3snraT18kzNJgzF3ghFkGbepT6A=",
+			"path": "github.com/mqliang/libipvs",
+			"revision": "b5ccc1e5bd005b75d533a255f9c0cb06758e31d5",
+			"revisionTime": "2017-06-29T09:11:42Z"
+		},
+		{
+			"checksumSHA1": "rJab1YdNhQooDiBWNnt7TLWPyBU=",
+			"path": "github.com/pkg/errors",
+			"revision": "c605e284fe17294bda444b34710735b29d1a9d90",
+			"revisionTime": "2017-05-05T04:36:39Z"
+		},
+		{
 			"checksumSHA1": "STxYqRb4gnlSr3mRpT+Igfdz/kM=",
 			"path": "github.com/spf13/pflag",
 			"revision": "e57e3eeb33f795204c1ca35f56c44f83227c6e66",
