@@ -9,16 +9,90 @@
 			"revisionTime": "2017-07-10T14:32:56Z"
 		},
 		{
+			"path": "github.com/coreos",
+			"revision": ""
+		},
+		{
+			"checksumSHA1": "A8S2BvJZghdrzqJXbvrMsTDVgL0=",
+			"path": "github.com/davecgh/go-spew",
+			"revision": "adab96458c51a58dc1783b3335dcce5461522e75",
+			"revisionTime": "2017-07-11T18:34:51Z"
+		},
+		{
+			"checksumSHA1": "RZWPN1d01d7+7vd5XLrUraDzD38=",
+			"path": "github.com/docker/distribution",
+			"revision": "f86db6b22663a27ba4d278220b7e34be528b1e79",
+			"revisionTime": "2017-06-27T18:58:08Z"
+		},
+		{
+			"checksumSHA1": "oLVte/DWD07MQy1YxHpCdids3Rk=",
+			"path": "github.com/docker/distribution/context",
+			"revision": "f86db6b22663a27ba4d278220b7e34be528b1e79",
+			"revisionTime": "2017-06-27T18:58:08Z"
+		},
+		{
+			"checksumSHA1": "Gj+xR1VgFKKmFXYOJMnAczC3Znk=",
+			"path": "github.com/docker/distribution/digestset",
+			"revision": "f86db6b22663a27ba4d278220b7e34be528b1e79",
+			"revisionTime": "2017-06-27T18:58:08Z"
+		},
+		{
+			"checksumSHA1": "2Fe4D6PGaVE2he4fUeenLmhC1lE=",
+			"path": "github.com/docker/distribution/reference",
+			"revision": "f86db6b22663a27ba4d278220b7e34be528b1e79",
+			"revisionTime": "2017-06-27T18:58:08Z"
+		},
+		{
+			"checksumSHA1": "cNp7rNReJHvdSfrIetXS9RGsLSo=",
+			"path": "github.com/docker/distribution/uuid",
+			"revision": "f86db6b22663a27ba4d278220b7e34be528b1e79",
+			"revisionTime": "2017-06-27T18:58:08Z"
+		},
+		{
 			"checksumSHA1": "EEJLrzbX8DArnhEUS6kFKJiM48I=",
 			"path": "github.com/docker/libnetwork/ipvs",
 			"revision": "73cb0e2bd29bb8a4b16fabf5188a2d386faf93b1",
 			"revisionTime": "2017-07-11T06:38:10Z"
 		},
 		{
+			"checksumSHA1": "g3z4plpw9F/ho3hdJb+X/bN/OgE=",
+			"path": "github.com/emicklei/go-restful",
+			"revision": "68c9750c36bb8cb433f1b88c807b4b30df4acc40",
+			"revisionTime": "2017-07-04T05:34:23Z"
+		},
+		{
+			"checksumSHA1": "rmsBHtFpV3osid71XnTZBo/b3bU=",
+			"path": "github.com/emicklei/go-restful/log",
+			"revision": "68c9750c36bb8cb433f1b88c807b4b30df4acc40",
+			"revisionTime": "2017-07-04T05:34:23Z"
+		},
+		{
+			"checksumSHA1": "ImX1uv6O09ggFeBPUJJ2nu7MPSA=",
+			"path": "github.com/ghodss/yaml",
+			"revision": "0ca9ea5df5451ffdf184b4428c902747c2c11cd7",
+			"revisionTime": "2017-03-27T23:54:44Z"
+		},
+		{
+			"path": "github.com/go-openapi",
+			"revision": ""
+		},
+		{
 			"checksumSHA1": "HmbftipkadrLlCfzzVQ+iFHbl6g=",
 			"path": "github.com/golang/glog",
 			"revision": "23def4e6c14b4da8ac2ed8007337bc5eb5007998",
 			"revisionTime": "2016-01-25T20:49:56Z"
+		},
+		{
+			"checksumSHA1": "g/V4qrXjUGG9B+e3hB+4NAYJ5Gs=",
+			"path": "github.com/gorilla/context",
+			"revision": "08b5f424b9271eedf6f9f0ce86cb9396ed337a42",
+			"revisionTime": "2016-08-17T18:46:32Z"
+		},
+		{
+			"checksumSHA1": "hIbmXmNbwyP44fi1hh6zJrMcYws=",
+			"path": "github.com/gorilla/mux",
+			"revision": "ac112f7d75a0714af1bd86ab17749b31f7809640",
+			"revisionTime": "2017-07-03T15:07:09Z"
 		},
 		{
 			"checksumSHA1": "KwhF/QG2xizyHFIG5B4uCTSUr8E=",
@@ -31,6 +105,12 @@
 			"path": "github.com/mqliang/libipvs",
 			"revision": "b5ccc1e5bd005b75d533a255f9c0cb06758e31d5",
 			"revisionTime": "2017-06-29T09:11:42Z"
+		},
+		{
+			"checksumSHA1": "OFNit1Qx2DdWhotfREKodDNUwCM=",
+			"path": "github.com/opencontainers/go-digest",
+			"revision": "279bed98673dd5bef374d3b6e4b09e2af76183bf",
+			"revisionTime": "2017-06-07T19:53:33Z"
 		},
 		{
 			"checksumSHA1": "rJab1YdNhQooDiBWNnt7TLWPyBU=",
@@ -63,20 +143,28 @@
 			"revisionTime": "2017-07-07T00:42:18Z"
 		},
 		{
+			"path": "golang.org/x/net/context",
+			"revision": ""
+		},
+		{
 			"path": "golang.org/x/sys/unix",
 			"revision": ""
 		},
 		{
-			"checksumSHA1": "4f57DdnzXvjDNCVZk4uV9ltx3I8=",
-			"path": "k8s.io/apimachinery",
-			"revision": "21de1bffe600f61f4873ae774a60f7a7d37ac9bf",
-			"revisionTime": "2017-07-06T23:48:30Z"
+			"path": "gopkg.in/yaml.v2",
+			"revision": ""
 		},
 		{
-			"checksumSHA1": "gjbPrvT1cL7W8hUkTLMaukWpOcM=",
+			"checksumSHA1": "qCVjTash4//FYuzeF6ge/3E8Z90=",
+			"path": "k8s.io/apimachinery",
+			"revision": "a13245d02534abe88286859b547d041816f9a3f4",
+			"revisionTime": "2017-07-16T03:56:22Z"
+		},
+		{
+			"checksumSHA1": "7Y7aC/97iq34Y1A5TjzwYX4egAA=",
 			"path": "k8s.io/client-go",
-			"revision": "53c7adfd0294caa142d961e1f780f74081d5b15f",
-			"revisionTime": "2017-07-11T23:59:49Z"
+			"revision": "1850dd66e4213a26bd70d0b85fee4176d324b845",
+			"revisionTime": "2017-07-16T03:59:03Z"
 		}
 	],
 	"rootPath": "kube-enn-proxy"
