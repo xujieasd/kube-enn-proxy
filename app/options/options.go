@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"github.com/spf13/pflag"
+	"github.com/mqliang/libipvs"
 )
 
 type KubeEnnProxyConfig struct {
@@ -25,7 +26,12 @@ type KubeEnnProxyConfig struct {
 
 func NewKubeEnnProxyConfig() *KubeEnnProxyConfig {
 	return &KubeEnnProxyConfig{
-
+		ConfigSyncPeriod:   1 * time.Minute,
+		IpvsSyncPeriod:     1 * time.Minute,
+		IPTablesSyncPeriod: 1 * time.Minute,
+		MinSyncPeriod:      5 * time.Second,
+		MasqueradeAll:      false,
+		IpvsScheduler:      libipvs.RoundRobin,
 	}
 }
 

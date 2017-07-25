@@ -35,16 +35,15 @@ const (
 //)
 
 type Service struct{
-	clusterIP       net.IP
-	port            int
-	protocol        string
-	nodePort        int
+	ClusterIP       net.IP
+	Port            int
+	Protocol        string
 	Scheduler       string
-	sessionAffinity bool
+	SessionAffinity bool
 }
 type Server struct{
-	ip      string
-	port    int
+	Ip      string
+	Port    int
 	Weight  int
 }
 
@@ -57,6 +56,8 @@ type EnnIpvs struct {
 
 type Interface interface {
 	//InitIpvsInterface() error
+	ListIpvsService() ([]*Service,error)
+	ListIpvsServer(service *Service) ([]*Server,error)
 	AddIpvsService(service *Service) error
 	DeleteIpvsService(service *Service) error
 	AddIpvsServer(service *Service, server *Server) error
@@ -100,14 +101,56 @@ func (ei *EnnIpvs) InitIpvsInterface() error {
 }
 */
 
+func (ei *EnnIpvs) ListIpvsService() ([]*Service,error){
+
+	svcs, err := ei.Ipvs_handle.ListServices()
+	if err != nil {
+		return nil, err
+	}
+
+	inter_svcs := make([]*Service,0)
+	for _, ipvs_svc := range svcs{
+		inter_svc, err := CreateInterService(ipvs_svc)
+		if err != nil{
+			return nil, err
+		}
+		inter_svcs = append(inter_svcs,inter_svc)
+	}
+
+	return inter_svcs, nil
+}
+
+func (ei *EnnIpvs) ListIpvsServer(service *Service) ([]*Server,error){
+
+	ipvs_service, err := CreateLibIpvsService(service)
+	if err != nil{
+		return nil, err
+	}
+	dsts, err := ei.Ipvs_handle.ListDestinations(ipvs_service)
+	if err != nil {
+		return nil, err
+	}
+
+	inter_dsts := make([]*Server,0)
+	for _, ipvs_dst := range dsts{
+		inter_dst, err := CreateInterServer(ipvs_dst)
+		if err != nil{
+			return nil, err
+		}
+		inter_dsts = append(inter_dsts,inter_dst)
+	}
+
+	return inter_dsts, nil
+}
+
 func (ei *EnnIpvs) AddIpvsService(service *Service) error{
 
 	protocol := ToProtocolNumber(service)
 
 	glog.Infof("AddIpvsService: add service: %s:%s:%s",
-		service.clusterIP.String(),
+		service.ClusterIP.String(),
 		libipvs.Protocol(protocol),
-		strconv.Itoa(int(service.port)),
+		strconv.Itoa(int(service.Port)),
 	)
 
 	svcs, err := ei.Ipvs_handle.ListServices()
@@ -116,9 +159,9 @@ func (ei *EnnIpvs) AddIpvsService(service *Service) error{
 	}
 
 	for _, svc := range svcs {
-		if strings.Compare(service.clusterIP.String(), svc.Address.String()) == 0 &&
-			libipvs.Protocol(protocol) == svc.Protocol && uint16(service.port) == svc.Port {
-			glog.Infof("AddIpvsService: ipvs service already exists")
+		if strings.Compare(service.ClusterIP.String(), svc.Address.String()) == 0 &&
+			libipvs.Protocol(protocol) == svc.Protocol && uint16(service.Port) == svc.Port {
+			glog.Info("AddIpvsService: ipvs service already exists")
 			return nil
 		}
 	}
@@ -143,9 +186,9 @@ func (ei *EnnIpvs) DeleteIpvsService(service *Service) error{
 	protocol := ToProtocolNumber(service)
 
 	glog.Infof("DeleteIpvsService: delete service: %s:%s:%s",
-		service.clusterIP.String(),
+		service.ClusterIP.String(),
 		libipvs.Protocol(protocol),
-		strconv.Itoa(int(service.port)),
+		strconv.Itoa(int(service.Port)),
 	)
 
 	svc, err:= CreateLibIpvsService(service)
@@ -308,7 +351,7 @@ func (ei *EnnIpvs) DeleteDummyLink() error{
 func (ei *EnnIpvs) AddDummyClusterIp(service *Service, link netlink.Link) error{
 	vip := &netlink.Addr{
 		IPNet: &net.IPNet{
-			service.clusterIP,
+			service.ClusterIP,
 			net.IPv4Mask(255, 255, 255, 255),
 		},
 		Scope: syscall.RT_SCOPE_LINK,
@@ -324,7 +367,7 @@ func (ei *EnnIpvs) AddDummyClusterIp(service *Service, link netlink.Link) error{
 func (ei *EnnIpvs) DeleteDummyClusterIp(service *Service, link netlink.Link) error{
 	vip := &netlink.Addr{
 		IPNet: &net.IPNet{
-			service.clusterIP,
+			service.ClusterIP,
 			net.IPv4Mask(255, 255, 255, 255),
 		},
 		Scope: syscall.RT_SCOPE_LINK,
@@ -345,14 +388,14 @@ func CreateLibIpvsService(service *Service) (*libipvs.Service, error){
 		return nil, errors.New("ipvs service is empty")
 	}
 	svc := &libipvs.Service{
-		Address:       service.clusterIP,
+		Address:       service.ClusterIP,
 		AddressFamily: syscall.AF_INET,
 		Protocol:      libipvs.Protocol(ToProtocolNumber(service)),
-		Port:          uint16(service.port),
+		Port:          uint16(service.Port),
 		SchedName:     service.Scheduler,
 	}
 
-	if service.sessionAffinity {
+	if service.SessionAffinity {
 		// set bit to enable service persistence
 		svc.Flags.Flags |= (1 << 24)
 		svc.Flags.Mask |= 0xFFFFFFFF
@@ -371,10 +414,41 @@ func CreateLibIpvsServer(dest *Server)(*libipvs.Destination, error){
 	}
 
 	dst := &libipvs.Destination{
-		Address:       net.ParseIP(dest.ip),
+		Address:       net.ParseIP(dest.Ip),
 		AddressFamily: syscall.AF_INET,
-		Port:          uint16(dest.port),
+		Port:          uint16(dest.Port),
 		Weight:        DEFAULWEIGHT,
+	}
+
+	return dst, nil
+}
+
+func CreateInterService(ipvsSvc *libipvs.Service) (*Service, error){
+	if ipvsSvc == nil{
+		glog.Errorf("CreateInterService: lib service cannot be null")
+		return nil, errors.New("ipvs service is empty")
+	}
+
+	svc := &Service{
+		ClusterIP:    ipvsSvc.Address,
+		Port:         int(ipvsSvc.Port),
+		Protocol:     ipvsSvc.Protocol.String(),
+		Scheduler:    ipvsSvc.SchedName,
+	}
+
+	return svc, nil
+}
+
+func CreateInterServer(ipvsDst *libipvs.Destination)(*Server, error){
+	if ipvsDst == nil{
+		glog.Errorf("CreateInterService: lib dst cannot be null")
+		return nil, errors.New("ipvs dst is empty")
+	}
+
+	dst := &Server{
+		Ip:      ipvsDst.Address.String(),
+		Port:    int(ipvsDst.Port),
+		Weight:  int(ipvsDst.Weight),
 	}
 
 	return dst, nil
@@ -383,7 +457,7 @@ func CreateLibIpvsServer(dest *Server)(*libipvs.Destination, error){
 func ToProtocolNumber(service *Service) uint16{
 
 	var protocol uint16
-	if service.protocol == "tcp" {
+	if service.Protocol == "tcp" {
 		protocol = syscall.IPPROTO_TCP
 	} else {
 		protocol = syscall.IPPROTO_UDP
@@ -391,15 +465,6 @@ func ToProtocolNumber(service *Service) uint16{
 	return protocol
 }
 
-func NewIpvsService() *Service{
-
-	return nil
-}
-
-func NewIPVSServer() *Server{
-
-	return nil
-}
 
 
 

@@ -1,19 +1,20 @@
 package app
 
 import (
-	//"errors"
-	//"os"
-	//"os/signal"
+	"errors"
+	"os"
+	"os/signal"
 	"sync"
-	//"syscall"
+	"syscall"
+	"time"
 
+	"github.com/golang/glog"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
 
 	"kube-enn-proxy/app/options"
 	"kube-enn-proxy/pkg/proxy/ipvs"
 	"kube-enn-proxy/pkg/watchers"
-
 )
 
 type EnnProxyServer struct {
@@ -21,9 +22,6 @@ type EnnProxyServer struct {
 	Config	        *options.KubeEnnProxyConfig
 	Client          *kubernetes.Clientset
 	Proxier         *ipvs.Proxier
-
-	EndpointConfig  *watchers.EndpointsWatcher
-	ServiceConfig   *watchers.ServicesWatcher
 
 }
 
@@ -42,6 +40,12 @@ func NewEnnProxyServer(
 
 func NewEnnProxyServerDefault(config *options.KubeEnnProxyConfig) (*EnnProxyServer ,error){
 
+	if config.Kubeconfig == "" && config.Master == "" {
+		glog.Warningf("Neither --kubeconfig nor --master was specified.  Using default API client.  This might not work.")
+		/*todo need modify default config path*/
+		config.Kubeconfig = "/var/lib/kubeconfig"
+	}
+
 	clientconfig, err := clientcmd.BuildConfigFromFlags(config.Master, config.Kubeconfig)
 	if err != nil {
 		panic(err.Error())
@@ -49,62 +53,101 @@ func NewEnnProxyServerDefault(config *options.KubeEnnProxyConfig) (*EnnProxyServ
 
 	clientset, err := kubernetes.NewForConfig(clientconfig)
 	if err != nil {
+		glog.Fatalf("Invalid API configuration: %v", err)
 		panic(err.Error())
 	}
 
-	proxier, err := ipvs.NewProxier(clientset, config)
-
+	err = tryIPVSProxy()
 	if(err != nil){
 		return nil, err
 	}
+
+	proxier, err := ipvs.NewProxier(clientset, config)
+	if(err != nil){
+		return nil, err
+	}
+
+	err = createWatcher(clientset, config.ConfigSyncPeriod)
+	if(err != nil){
+		return nil, err
+	}
+	watchers.EndpointsWatchConfig.RegisterHandler(proxier)
+	watchers.ServiceWatchConfig.RegisterHandler(proxier)
 
 	return NewEnnProxyServer(config, clientset, proxier)
 
 }
 
 
-func (s *EnnProxyServer) StartWatcher() error{
-	ew, err := watchers.StartEndpointWatcher(s.Client, s.Config.ConfigSyncPeriod)
+func createWatcher(clientset *kubernetes.Clientset, resyncPeriod time.Duration) error{
+
+	var err error
+
+	_, err = watchers.NewEndpointWatcher(clientset, resyncPeriod)
 
 	if err != nil {
 		panic(err.Error())
 	}
 
-	s.EndpointConfig = ew
-
-	sw, err := watchers.StartServiceWatcher(s.Client, s.Config.ConfigSyncPeriod)
+	_, err = watchers.NewServiceWatcher(clientset, resyncPeriod)
 
 	if err != nil {
 		panic(err.Error())
 	}
-
-	s.ServiceConfig = sw
 
 	return nil
 }
 
 func (s *EnnProxyServer) StopWatcher() error{
 
-	s.EndpointConfig.StopEndpointsWatcher()
-	s.ServiceConfig.StopEndpointsWatcher()
+	watchers.EndpointsWatchConfig.StopEndpointsWatcher()
+	watchers.ServiceWatchConfig.StopServiceWatcher()
 
+	return nil
+}
+
+func tryIPVSProxy() error{
+	use, err := ipvs.CanUseIpvs()
+	if err != nil {
+		glog.Errorf("can not determine whether to use ipvs proxy")
+		return err
+	}
+	if !use{
+		glog.Errorf("can not ipvs proxy")
+		return errors.New("can not ipvs proxy")
+	}
 	return nil
 }
 
 func (s *EnnProxyServer) Run() error{
 
+	glog.Infof("start run enn proxy")
 	var StopCh chan struct{}
 	var wg sync.WaitGroup
 
-	err:= s.StartWatcher()
-	if(err != nil){
-		return err
+	if s.Config.CleanupConfig{
+		s.Proxier.CleanupLeftovers()
 	}
 
 	StopCh = make(chan struct{})
-	wg.Add(1)
 
-	s.Proxier.SyncLoop(StopCh, &wg)
+	wg.Add(1)
+	go s.Proxier.SyncLoop(StopCh, &wg)
+
+
+	ch := make(chan os.Signal)
+	signal.Notify(ch, syscall.SIGINT, syscall.SIGTERM)
+	<-ch
+
+	glog.Infof("get sys terminal and exit enn proxy")
+	StopCh <- struct{}{}
+
+	err := s.StopWatcher()
+	if(err != nil){
+		glog.Errorf("stop watcher failed %s",err.Error())
+	}
+
+	wg.Wait()
 
 	return nil
 }

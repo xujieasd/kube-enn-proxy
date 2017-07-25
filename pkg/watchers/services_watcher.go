@@ -10,7 +10,7 @@ import (
 	"k8s.io/apimachinery/pkg/fields"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	"kube-enn-proxy/pkg/util"
+	"kube-enn-proxy/pkg/watchers/config"
 
 )
 
@@ -28,13 +28,16 @@ type ServicesWatcher struct {
 	broadcaster         *util.Broadcaster
 	StopCh              chan struct{}
 }
+
+var ServiceWatchConfig *ServicesWatcher
+
 // ServicesUpdatesHandler is an abstract interface of objects which receive update notifications for the set of endpoints.
 type ServicesUpdatesHandler interface {
 	OnServicesUpdate(servicesUpdate *ServicesUpdate)
 }
 
 
-func (sw ServicesWatcher) servicesAdd(obj interface{}){
+func (sw *ServicesWatcher) servicesAdd(obj interface{}){
 	services, ok := obj.(*api.Service)
 	if !ok {
 		glog.Errorf("servicesAdd: failed")
@@ -46,7 +49,7 @@ func (sw ServicesWatcher) servicesAdd(obj interface{}){
 	})
 }
 
-func (sw ServicesWatcher) servicesDelete(obj interface{}){
+func (sw *ServicesWatcher) servicesDelete(obj interface{}){
 	services, ok := obj.(*api.Service)
 	if !ok {
 		glog.Errorf("servicesDelete: failed")
@@ -58,7 +61,7 @@ func (sw ServicesWatcher) servicesDelete(obj interface{}){
 	})
 }
 
-func (sw ServicesWatcher) servicesUpdate(old, obj interface{}){
+func (sw *ServicesWatcher) servicesUpdate(old, obj interface{}){
 	services_new, ok := obj.(*api.Service)
 	if !ok {
 		glog.Errorf("servicesUpdate: new obj failed")
@@ -80,18 +83,28 @@ func (sw ServicesWatcher) servicesUpdate(old, obj interface{}){
 
 }
 
-func (sw ServicesWatcher) RegisterHandler(handler ServicesUpdatesHandler) {
+func (sw *ServicesWatcher) RegisterHandler(handler ServicesUpdatesHandler) {
 	sw.broadcaster.Add(util.ListenerFunc(func(instance interface{}) {
 		glog.Infof("RegisterHandler: Calling handler.OnServicesUpdate()")
 		handler.OnServicesUpdate(instance.(*ServicesUpdate))
 	}))
 }
 
-func (sw ServicesWatcher) HasSynced() bool {
+func (sw *ServicesWatcher) HasSynced() bool {
 	return sw.servicesController.HasSynced()
 }
 
-func StartServiceWatcher (
+func (sw *ServicesWatcher) List() []*api.Service {
+	list := sw.servicesLister.List()
+	var service_list []*api.Service
+	service_list = make([]*api.Service, len(list))
+	for i, svc := range list{
+		service_list[i] = svc.(*api.Service)
+	}
+	return service_list
+}
+
+func NewServiceWatcher (
 	clientset *kubernetes.Clientset,
 	resyncPeriod time.Duration,
 )(*ServicesWatcher, error) {
@@ -118,12 +131,14 @@ func StartServiceWatcher (
 		},
 	)
 
+	ServiceWatchConfig = &sw
+
 	go sw.servicesController.Run(sw.StopCh)
 
 	return &sw, nil
 }
 
-func (sw ServicesWatcher) StopEndpointsWatcher() {
+func (sw *ServicesWatcher) StopServiceWatcher() {
 	sw.StopCh <- struct{}{}
 }
 
