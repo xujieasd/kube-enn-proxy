@@ -1,7 +1,7 @@
 package main
 
 import (
-	//"flag"
+	"flag"
 	"fmt"
 	"os"
 
@@ -13,6 +13,9 @@ import (
 func main() {
 	config := options.NewKubeEnnProxyConfig()
 	config.AddFlags(pflag.CommandLine)
+
+	pflag.Parse()
+	flag.Set("logtostderr", "true")
 
 
 	s, err := app.NewEnnProxyServerDefault(config)

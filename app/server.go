@@ -43,7 +43,7 @@ func NewEnnProxyServerDefault(config *options.KubeEnnProxyConfig) (*EnnProxyServ
 	if config.Kubeconfig == "" && config.Master == "" {
 		glog.Warningf("Neither --kubeconfig nor --master was specified.  Using default API client.  This might not work.")
 		/*todo need modify default config path*/
-		config.Kubeconfig = "/var/lib/kubeconfig"
+		config.Kubeconfig = "/var/lib/kube-enn-proxy/kubeconfig"
 	}
 
 	clientconfig, err := clientcmd.BuildConfigFromFlags(config.Master, config.Kubeconfig)

@@ -271,8 +271,9 @@ func (proxier *Proxier) syncProxyRules(){
 					glog.Errorf("syncProxyRules: add ipvs destination feild: %s",err)
 					continue
 
-					activeServiceMap[nodeKey] = append(activeServiceMap[nodeKey],endpointValue)
 				}
+
+				activeServiceMap[nodeKey] = append(activeServiceMap[nodeKey],endpointValue)
 			}
 		}
 
@@ -293,7 +294,7 @@ func (proxier *Proxier) syncProxyRules(){
 			port:     oldSvc.Port,
 			protocol: oldSvc.Protocol,
 		}
-
+		glog.Infof("check active service: %s:%d:%s",serviceKey.ip,serviceKey.port,serviceKey.protocol)
 		activeEndpoints, ok := activeServiceMap[serviceKey]
 
 		/* unused service info so remove ipvs config and dummy cluster ip*/
@@ -319,10 +320,13 @@ func (proxier *Proxier) syncProxyRules(){
 				panic(err)
 			}
 			for _, oldDst := range oldDsts{
+				glog.Infof("old dst %s:%d", oldDst.Ip,oldDst.Port)
 				isActive := false
 				for _, activeEP := range activeEndpoints{
+					glog.Infof("active endpoints %s:%d", activeEP.ip, activeEP.port)
 					if strings.Compare(activeEP.ip,oldDst.Ip) == 0 && activeEP.port == oldDst.Port{
 						isActive = true
+						glog.Infof("endpoints %s:%d still active",activeEP.ip,activeEP.port)
 						break
 					}
 				}
