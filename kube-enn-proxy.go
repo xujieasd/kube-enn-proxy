@@ -17,6 +17,10 @@ func main() {
 	pflag.Parse()
 	flag.Set("logtostderr", "true")
 
+	if config.CleanupConfig{
+		app.CleanUpAndExit()
+		os.Exit(0)
+	}
 
 	s, err := app.NewEnnProxyServerDefault(config)
 	if err != nil {

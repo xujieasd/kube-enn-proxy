@@ -119,15 +119,16 @@ func tryIPVSProxy() error{
 	return nil
 }
 
+func CleanUpAndExit() {
+	proxier := ipvs.FakeProxier()
+	proxier.CleanupLeftovers()
+}
+
 func (s *EnnProxyServer) Run() error{
 
 	glog.Infof("start run enn proxy")
 	var StopCh chan struct{}
 	var wg sync.WaitGroup
-
-	if s.Config.CleanupConfig{
-		s.Proxier.CleanupLeftovers()
-	}
 
 	StopCh = make(chan struct{})
 

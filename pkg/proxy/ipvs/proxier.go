@@ -135,6 +135,13 @@ func NewProxier(
 
 }
 
+func FakeProxier() *Proxier{
+	ipvs := ipvsutil.NewEnnIpvs()
+	return &Proxier{
+		ipvsInterface: ipvs,
+	}
+}
+
 func (proxier *Proxier) SyncLoop(stopCh <-chan struct{}, wg *sync.WaitGroup){
 
 	glog.Infof("Run IPVS Proxier")
