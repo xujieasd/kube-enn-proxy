@@ -83,9 +83,13 @@ func NewProxier(
 		return nil, fmt.Errorf("min-sync (%v) must be < sync(%v)", minSyncPeriod, syncPeriod)
 	}
 
+	ipvs := ipvsutil.NewEnnIpvs()
+	//err := ipvsInterface.InitIpvsInterface()
+	glog.Infof("insmod ipvs module")
+
 	err := setNetFlag()
 	if err != nil{
-		return nil, fmt.Errorf("NewProxier failure: setNetFlag fall")
+		return nil, fmt.Errorf("NewProxier failure: setNetFlag fall: %v", err)
 	}
 
 	var masqueradeAll = false
@@ -114,8 +118,6 @@ func NewProxier(
 		scheduler = config.IpvsScheduler
 	}
 
-	ipvs := ipvsutil.NewEnnIpvs()
-	//err := ipvsInterface.InitIpvsInterface()
 
 	IpvsProxier := Proxier{
 		serviceMap:    make(util.ProxyServiceMap),
