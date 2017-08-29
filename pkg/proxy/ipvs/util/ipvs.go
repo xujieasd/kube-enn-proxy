@@ -15,7 +15,8 @@ import (
 
 	"github.com/golang/glog"
 	"github.com/vishvananda/netlink"
-	"github.com/mqliang/libipvs"
+	//"github.com/mqliang/libipvs"
+	libipvs "github.com/docker/libnetwork/ipvs"
 
 )
 
@@ -49,15 +50,18 @@ type Server struct{
 
 
 type EnnIpvs struct {
-	Ipvs_handle	libipvs.IPVSHandle
+	//Ipvs_handle	libipvs.IPVSHandle
+	Ipvs_handle	*libipvs.Handle
 	//Service		ipvs.Service
 	//Destination	ipvs.Destination
 }
 
 type Interface interface {
 	//InitIpvsInterface() error
-	ListIpvsService() ([]*Service,error)
-	ListIpvsServer(service *Service) ([]*Server,error)
+	//ListIpvsService() ([]*Service,error)
+	ListIpvsService() ([]*libipvs.Service,error)
+	//ListIpvsServer(service *Service) ([]*Server,error)
+	ListIpvsServer(service *libipvs.Service) ([]*Server,error)
 	AddIpvsService(service *Service) error
 	DeleteIpvsService(service *Service) error
 	AddIpvsServer(service *Service, server *Server) error
@@ -73,7 +77,8 @@ type Interface interface {
 
 func NewEnnIpvs() Interface{
 
-	handle, err := libipvs.New()
+	//handle, err := libipvs.New()
+	handle, err := libipvs.New("")
 	if err != nil {
 		glog.Errorf("InitIpvsInterface failed Error: %v", err)
 		panic(err)
@@ -100,7 +105,7 @@ func (ei *EnnIpvs) InitIpvsInterface() error {
 	return nil
 }
 */
-
+/*
 func (ei *EnnIpvs) ListIpvsService() ([]*Service,error){
 
 	svcs, err := ei.Ipvs_handle.ListServices()
@@ -119,7 +124,14 @@ func (ei *EnnIpvs) ListIpvsService() ([]*Service,error){
 
 	return inter_svcs, nil
 }
+*/
 
+func (ei *EnnIpvs) ListIpvsService() ([]*libipvs.Service,error) {
+	//svcs, err := ei.Ipvs_handle.ListServices()
+	svcs, err := ei.Ipvs_handle.GetServices()
+	return svcs, err
+}
+/*
 func (ei *EnnIpvs) ListIpvsServer(service *Service) ([]*Server,error){
 
 	ipvs_service, err := CreateLibIpvsService(service)
@@ -142,6 +154,25 @@ func (ei *EnnIpvs) ListIpvsServer(service *Service) ([]*Server,error){
 
 	return inter_dsts, nil
 }
+*/
+func (ei *EnnIpvs) ListIpvsServer(service *libipvs.Service) ([]*Server,error) {
+	//dsts, err := ei.Ipvs_handle.ListDestinations(service)
+	dsts, err := ei.Ipvs_handle.GetDestinations(service)
+	if err != nil {
+		return nil, err
+	}
+
+	inter_dsts := make([]*Server,0)
+	for _, ipvs_dst := range dsts{
+		inter_dst, err := CreateInterServer(ipvs_dst)
+		if err != nil{
+			return nil, err
+		}
+		inter_dsts = append(inter_dsts,inter_dst)
+	}
+
+	return inter_dsts, nil
+}
 
 func (ei *EnnIpvs) AddIpvsService(service *Service) error{
 
@@ -149,18 +180,20 @@ func (ei *EnnIpvs) AddIpvsService(service *Service) error{
 
 	glog.Infof("AddIpvsService: add service: %s:%s:%s",
 		service.ClusterIP.String(),
-		libipvs.Protocol(protocol),
+		//libipvs.Protocol(protocol),
+		service.Protocol,
 		strconv.Itoa(int(service.Port)),
 	)
 
-	svcs, err := ei.Ipvs_handle.ListServices()
+	//svcs, err := ei.Ipvs_handle.ListServices()
+	svcs, err := ei.Ipvs_handle.GetServices()
 	if err != nil {
 		panic(err)
 	}
 
 	for _, svc := range svcs {
 		if strings.Compare(service.ClusterIP.String(), svc.Address.String()) == 0 &&
-			libipvs.Protocol(protocol) == svc.Protocol && uint16(service.Port) == svc.Port {
+			/*libipvs.Protocol(protocol)*/ protocol == svc.Protocol && uint16(service.Port) == svc.Port {
 			glog.Info("AddIpvsService: ipvs service already exists")
 			return nil
 		}
@@ -183,11 +216,12 @@ func (ei *EnnIpvs) AddIpvsService(service *Service) error{
 
 func (ei *EnnIpvs) DeleteIpvsService(service *Service) error{
 
-	protocol := ToProtocolNumber(service)
+	//protocol := ToProtocolNumber(service)
 
 	glog.Infof("DeleteIpvsService: delete service: %s:%s:%s",
 		service.ClusterIP.String(),
-		libipvs.Protocol(protocol),
+		//libipvs.Protocol(protocol),
+		service.Protocol,
 		strconv.Itoa(int(service.Port)),
 	)
 
@@ -218,7 +252,8 @@ func (ei *EnnIpvs) AddIpvsServer(service *Service, server *Server) error{
 		dest.Address,
 		strconv.Itoa(int(dest.Port)),
 		svc.Address,
-		svc.Protocol,
+		//svc.Protocol,
+		ToProtocolString(svc),
 		strconv.Itoa(int(svc.Port)),
 	)
 
@@ -250,7 +285,8 @@ func (ei *EnnIpvs) DeleteIpvsServer(service *Service, server *Server) error{
 		dest.Address,
 		strconv.Itoa(int(dest.Port)),
 		svc.Address,
-		svc.Protocol,
+		//svc.Protocol,
+		ToProtocolString(svc),
 		strconv.Itoa(int(svc.Port)),
 	)
 
@@ -265,13 +301,14 @@ func (ei *EnnIpvs) DeleteIpvsServer(service *Service, server *Server) error{
 
 func (ei *EnnIpvs) FlushIpvs() error{
 
-	err := ei.Ipvs_handle.Flush()
-
+	//err := ei.Ipvs_handle.Flush()
+	ei.Ipvs_handle.Close()
+/*
 	if err != nil {
 		glog.Errorf("FlushIpvs: cleanup ipvs rules failed: ", err.Error())
 		return err
 	}
-
+*/
 	return nil
 }
 
@@ -390,15 +427,18 @@ func CreateLibIpvsService(service *Service) (*libipvs.Service, error){
 	svc := &libipvs.Service{
 		Address:       service.ClusterIP,
 		AddressFamily: syscall.AF_INET,
-		Protocol:      libipvs.Protocol(ToProtocolNumber(service)),
+		//Protocol:      libipvs.Protocol(ToProtocolNumber(service)),
+		Protocol:      ToProtocolNumber(service),
 		Port:          uint16(service.Port),
 		SchedName:     service.Scheduler,
 	}
 
 	if service.SessionAffinity {
 		// set bit to enable service persistence
-		svc.Flags.Flags |= (1 << 24)
-		svc.Flags.Mask |= 0xFFFFFFFF
+		//svc.Flags.Flags |= (1 << 24)
+		//svc.Flags.Mask |= 0xFFFFFFFF
+		svc.Flags |= (1 << 24)
+		svc.Netmask |= 0xFFFFFFFF
 		svc.Timeout = 180 * 60
 	}
 
@@ -432,7 +472,8 @@ func CreateInterService(ipvsSvc *libipvs.Service) (*Service, error){
 	svc := &Service{
 		ClusterIP:    ipvsSvc.Address,
 		Port:         int(ipvsSvc.Port),
-		Protocol:     ipvsSvc.Protocol.String(),
+		//Protocol:     ipvsSvc.Protocol.String(),
+		Protocol:     ToProtocolString(ipvsSvc),
 		Scheduler:    ipvsSvc.SchedName,
 	}
 
@@ -465,6 +506,17 @@ func ToProtocolNumber(service *Service) uint16{
 	return protocol
 }
 
+func ToProtocolString(service *libipvs.Service) string {
 
+	var protocol string
+	if service.Protocol == syscall.IPPROTO_TCP{
+		protocol = "tcp"
+	} else if service.Protocol == syscall.IPPROTO_UDP{
+		protocol = "udp"
+	} else {
+		protocol = "unknow"
+	}
+	return protocol
+}
 
 

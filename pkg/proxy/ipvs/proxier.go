@@ -297,10 +297,18 @@ func (proxier *Proxier) syncProxyRules(){
 		panic(err)
 	}
 	for _, oldSvc := range oldSvcs{
+		/*
 		serviceKey := activeServiceKey{
 			ip:       oldSvc.ClusterIP.String(),
 			port:     oldSvc.Port,
 			protocol: oldSvc.Protocol,
+		}
+		*/
+		oldSvc_t, err := ipvsutil.CreateInterService(oldSvc)
+		serviceKey := activeServiceKey{
+			ip:       oldSvc_t.ClusterIP.String(),
+			port:     oldSvc_t.Port,
+			protocol: oldSvc_t.Protocol,
 		}
 		glog.Infof("check active service: %s:%d:%s",serviceKey.ip,serviceKey.port,serviceKey.protocol)
 		activeEndpoints, ok := activeServiceMap[serviceKey]
@@ -308,13 +316,18 @@ func (proxier *Proxier) syncProxyRules(){
 		/* unused service info so remove ipvs config and dummy cluster ip*/
 		if !ok{
 			glog.Infof("delet unused ipvs service config and dummy cluster ip")
-			err = proxier.ipvsInterface.DeleteIpvsService(oldSvc)
+			//err = proxier.ipvsInterface.DeleteIpvsService(oldSvc)
+			err = proxier.ipvsInterface.DeleteIpvsService(oldSvc_t)
+
 			if err != nil{
 				glog.Errorf("clean unused ipvs service failed: %s",err)
 				continue
 			}
-			if strings.Compare(oldSvc.ClusterIP.String(),proxier.nodeIP.String()) != 0{
-				err = proxier.ipvsInterface.DeleteDummyClusterIp(oldSvc,dummylink)
+			//if strings.Compare(oldSvc.ClusterIP.String(),proxier.nodeIP.String()) != 0{
+			if strings.Compare(oldSvc_t.ClusterIP.String(),proxier.nodeIP.String()) != 0{
+				//err = proxier.ipvsInterface.DeleteDummyClusterIp(oldSvc,dummylink)
+				err = proxier.ipvsInterface.DeleteDummyClusterIp(oldSvc_t,dummylink)
+
 				if err != nil{
 					glog.Errorf("clean unused dummy cluster ip failed: %s",err)
 					continue
@@ -340,7 +353,8 @@ func (proxier *Proxier) syncProxyRules(){
 				}
 				if !isActive{
 					glog.Infof("delete unused ipvs destination")
-					err = proxier.ipvsInterface.DeleteIpvsServer(oldSvc,oldDst)
+					//err = proxier.ipvsInterface.DeleteIpvsServer(oldSvc,oldDst)
+					err = proxier.ipvsInterface.DeleteIpvsServer(oldSvc_t,oldDst)
 					if err != nil{
 						glog.Errorf("clean unused ipvs destination config failed: %s",err)
 						continue
