@@ -301,9 +301,21 @@ func (ei *EnnIpvs) DeleteIpvsServer(service *Service, server *Server) error{
 
 func (ei *EnnIpvs) FlushIpvs() error{
 
-	//err := ei.Ipvs_handle.Flush()
-	ei.Ipvs_handle.Close()
+	svcs, err := ei.Ipvs_handle.GetServices()
+	if err != nil{
+		return err
+	}
+
+	for _, svc := range svcs{
+		err := ei.Ipvs_handle.DelService(svc)
+		if err != nil{
+			glog.Errorf("flush ipvs err: %v",err)
+		}
+	}
+
 /*
+	err := ei.Ipvs_handle.Flush()
+
 	if err != nil {
 		glog.Errorf("FlushIpvs: cleanup ipvs rules failed: ", err.Error())
 		return err

@@ -97,7 +97,7 @@ func NewProxier(
 		masqueradeAll = true
 	}
 
-	/*todo need to handle when CIDR not net*/
+	/*todo need to handle when CIDR not set*/
 	clusterCIDR, err := util.GetPodCidrFromNodeSpec(clientset,config.HostnameOverride)
 	if err != nil{
 		return nil, fmt.Errorf("NewProxier failure: GetPodCidr fall: %s", err.Error())
