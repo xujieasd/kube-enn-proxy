@@ -19,6 +19,8 @@ type ServiceInfo struct {
 	Protocol            string
 	NodePort            int
 	SessionAffinity     bool
+	ExternalIPs         []string
+
 }
 
 type ProxyServiceMap map[proxy.ServicePortName]*ServiceInfo
@@ -79,11 +81,14 @@ func BuildServiceMap(oldServiceMap ProxyServiceMap) (ProxyServiceMap, sets.Strin
 func newServiceInfo(serviceName proxy.ServicePortName, port *api.ServicePort, service *api.Service) *ServiceInfo{
 
 	info := &ServiceInfo{
-		ClusterIP: net.ParseIP(service.Spec.ClusterIP),
-		Port:      int(port.Port),
-		Protocol:  strings.ToLower(string(port.Protocol)),
-		NodePort:  int(port.NodePort),
+		ClusterIP:                net.ParseIP(service.Spec.ClusterIP),
+		Port:                     int(port.Port),
+		Protocol:                 strings.ToLower(string(port.Protocol)),
+		NodePort:                 int(port.NodePort),
+		ExternalIPs:              make([]string, len(service.Spec.ExternalIPs)),
 	}
+	copy(info.ExternalIPs, service.Spec.ExternalIPs)
+
 	if service.Spec.SessionAffinity == "ClientIP"{
 		info.SessionAffinity = true
 	} else {

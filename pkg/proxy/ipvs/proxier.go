@@ -16,6 +16,10 @@ import (
 
 	"github.com/golang/glog"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/apimachinery/pkg/types"
+	clientv1 "k8s.io/client-go/pkg/api/v1"
+	"k8s.io/client-go/pkg/api"
+	"k8s.io/client-go/tools/record"
 
 	"github.com/coreos/go-iptables/iptables"
 
@@ -42,6 +46,7 @@ type Proxier struct {
 	mu		sync.Mutex
 	serviceMap      util.ProxyServiceMap
 	endpointsMap    util.ProxyEndpointMap
+	portsMap         map[util.LocalPort]util.Closeable
 
 	syncPeriod	time.Duration
 	minSyncPeriod   time.Duration
@@ -57,9 +62,11 @@ type Proxier struct {
 	client          *kubernetes.Clientset
 
 	ipvsInterface	ipvsutil.Interface
-
+	recorder        record.EventRecorder
+	portMapper      util.PortOpener
 
 }
+
 
 type activeServiceKey struct {
 	ip       string
@@ -119,10 +126,15 @@ func NewProxier(
 	if len(config.IpvsScheduler) != 0{
 		scheduler = config.IpvsScheduler
 	}
-	
+
+
+	eventBroadcaster := record.NewBroadcaster()
+	recorder := eventBroadcaster.NewRecorder(api.Scheme, clientv1.EventSource{Component: "kube-proxy", Host: hostname})
+
 	IpvsProxier := Proxier{
 		serviceMap:    make(util.ProxyServiceMap),
 		endpointsMap:  make(util.ProxyEndpointMap),
+		portsMap:       make(map[util.LocalPort]util.Closeable),
 		masqueradeAll: masqueradeAll,
 		exec:          execer,
 		clusterCIDR:   clusterCIDR,
@@ -133,6 +145,8 @@ func NewProxier(
 		minSyncPeriod: minSyncPeriod,
 		client:        clientset,
 		ipvsInterface: ipvs,
+		recorder:      recorder,
+		portMapper:    &util.ListenPortOpener{},
 	}
 
 	return &IpvsProxier, nil
@@ -197,9 +211,14 @@ func (proxier *Proxier) syncProxyRules(){
 		return
 	}
 
-	for svcName, serviceInfo := range proxier.serviceMap {
+	// Accumulate the set of local ports that we will be holding open once this update is complete
+	replacementPortsMap := map[util.LocalPort]util.Closeable{}
 
-		var ipvs_node_service *ipvsutil.Service
+	for svcName, serviceInfo := range proxier.serviceMap {
+		protocol := strings.ToLower(serviceInfo.Protocol)
+
+		/* capture cluster ip */
+
 		ipvs_cluster_service := &ipvsutil.Service{
 			ClusterIP:       serviceInfo.ClusterIP,
 			Port:            serviceInfo.Port,
@@ -207,16 +226,6 @@ func (proxier *Proxier) syncProxyRules(){
 			Scheduler:       ipvsutil.DEFAULSCHE,
 			SessionAffinity: serviceInfo.SessionAffinity,
 
-		}
-
-		if serviceInfo.NodePort != 0{
-			ipvs_node_service = &ipvsutil.Service{
-				ClusterIP:        proxier.nodeIP,
-				Port:             serviceInfo.NodePort,
-				Protocol:         serviceInfo.Protocol,
-				Scheduler:        ipvsutil.DEFAULSCHE,
-				SessionAffinity:  serviceInfo.SessionAffinity,
-			}
 		}
 
 		/* add cluster ip to dummy link */
@@ -233,7 +242,6 @@ func (proxier *Proxier) syncProxyRules(){
 			continue
 		}
 
-		var nodeKey activeServiceKey
 		clusterKey := activeServiceKey{
 			ip:       ipvs_cluster_service.ClusterIP.String(),
 			port:     ipvs_cluster_service.Port,
@@ -241,19 +249,6 @@ func (proxier *Proxier) syncProxyRules(){
 		}
 		activeServiceMap[clusterKey] = make([]activeServiceValue,0)
 
-		if serviceInfo.NodePort != 0{
-			err = proxier.ipvsInterface.AddIpvsService(ipvs_node_service)
-			if err != nil{
-				glog.Errorf("syncProxyRules: add ipvs node service feild: %s",err)
-				continue
-			}
-			nodeKey = activeServiceKey{
-				ip:       ipvs_node_service.ClusterIP.String(),
-				port:     ipvs_node_service.Port,
-				protocol: ipvs_node_service.Protocol,
-			}
-			activeServiceMap[nodeKey] = make([]activeServiceValue,0)
-		}
 
 		/* handle ipvs destination add */
 		for _, endpointinfo := range proxier.endpointsMap[svcName]{
@@ -276,7 +271,45 @@ func (proxier *Proxier) syncProxyRules(){
 
 			activeServiceMap[clusterKey] = append(activeServiceMap[clusterKey],endpointValue)
 
-			if serviceInfo.NodePort != 0{
+		}
+
+		/* capture node port */
+
+		if serviceInfo.NodePort != 0{
+			ipvs_node_service := &ipvsutil.Service{
+				ClusterIP:        proxier.nodeIP,
+				Port:             serviceInfo.NodePort,
+				Protocol:         serviceInfo.Protocol,
+				Scheduler:        ipvsutil.DEFAULSCHE,
+				SessionAffinity:  serviceInfo.SessionAffinity,
+			}
+
+			/* handle ipvs service add */
+			err = proxier.ipvsInterface.AddIpvsService(ipvs_node_service)
+			if err != nil{
+				glog.Errorf("syncProxyRules: add ipvs node service feild: %s",err)
+				continue
+			}
+			nodeKey := activeServiceKey{
+				ip:       ipvs_node_service.ClusterIP.String(),
+				port:     ipvs_node_service.Port,
+				protocol: ipvs_node_service.Protocol,
+			}
+			activeServiceMap[nodeKey] = make([]activeServiceValue,0)
+
+			/* handle ipvs destination add */
+			for _, endpointinfo := range proxier.endpointsMap[svcName]{
+				ipvs_server := &ipvsutil.Server{
+					Ip:      endpointinfo.Ip,
+					Port:    endpointinfo.Port,
+					Weight:  ipvsutil.DEFAULWEIGHT,
+				}
+
+				endpointValue := activeServiceValue{
+					ip:    ipvs_server.Ip,
+					port:  ipvs_server.Port,
+				}
+
 				err = proxier.ipvsInterface.AddIpvsServer(ipvs_node_service, ipvs_server)
 				if err != nil{
 					glog.Errorf("syncProxyRules: add ipvs destination feild: %s",err)
@@ -285,8 +318,50 @@ func (proxier *Proxier) syncProxyRules(){
 				}
 
 				activeServiceMap[nodeKey] = append(activeServiceMap[nodeKey],endpointValue)
+
 			}
+
 		}
+
+		/* Capture externalIPs */
+
+		for _, externalIP := range serviceInfo.ExternalIPs {
+			// If the "external" IP happens to be an IP that is local to this
+			// machine, hold the local port open so no other process can open it
+			// (because the socket might open but it would never work).
+			if local, err := isLocalIP(externalIP); err != nil {
+				glog.Errorf("can't determine if IP is local, assuming not: %v", err)
+			} else if local {
+				lp := util.LocalPort{
+					Desc:     "externalIP for " + svcName.String(),
+					Ip:       externalIP,
+					Port:     serviceInfo.Port,
+					Protocol: protocol,
+				}
+				if proxier.portsMap[lp] != nil {
+					glog.V(4).Infof("Port %s was open before and is still needed", lp.String())
+					replacementPortsMap[lp] = proxier.portsMap[lp]
+				} else {
+					socket, err := proxier.portMapper.OpenLocalPort(&lp)
+					if err != nil {
+						msg := fmt.Sprintf("can't open %s, skipping this externalIP: %v", lp.String(), err)
+
+						proxier.recorder.Eventf(
+							&clientv1.ObjectReference{
+								Kind:      "Node",
+								Name:      proxier.hostname,
+								UID:       types.UID(proxier.hostname),
+								Namespace: "",
+							}, api.EventTypeWarning, err.Error(), msg)
+						glog.Error(msg)
+						continue
+					}
+					replacementPortsMap[lp] = socket
+				}
+			} // We're holding the port, so it's OK to install ipvs rules.
+
+		}
+
 
 	}
 
@@ -368,6 +443,33 @@ func (proxier *Proxier) syncProxyRules(){
 		}
 	}
 
+
+	// Close old local ports and save new ones.
+	for k, v := range proxier.portsMap {
+		if replacementPortsMap[k] == nil {
+			v.Close()
+		}
+	}
+	proxier.portsMap = replacementPortsMap
+
+}
+
+
+func isLocalIP(ip string) (bool, error) {
+	addrs, err := net.InterfaceAddrs()
+	if err != nil {
+		return false, err
+	}
+	for i := range addrs {
+		intf, _, err := net.ParseCIDR(addrs[i].String())
+		if err != nil {
+			return false, err
+		}
+		if net.ParseIP(ip).Equal(intf) {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 func (proxier *Proxier) OnEndpointsUpdate(endpointsUpdate *watchers.EndpointsUpdate){
