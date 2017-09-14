@@ -19,8 +19,9 @@ import (
 
 	"github.com/coreos/go-iptables/iptables"
 
-	ipvsutil "kube-enn-proxy/pkg/proxy/ipvs/util"
-	"kube-enn-proxy/pkg/util"
+	ipvsutil "kube-enn-proxy/pkg/util/ipvs"
+	utilexec "kube-enn-proxy/pkg/util/exec"
+	"kube-enn-proxy/pkg/proxy/util"
 	"kube-enn-proxy/app/options"
 	"kube-enn-proxy/pkg/watchers"
 
@@ -47,6 +48,7 @@ type Proxier struct {
 
 
 	masqueradeAll   bool
+	exec            utilexec.Interface
 	clusterCIDR     string
 	hostname        string
 	nodeIP          net.IP
@@ -82,7 +84,7 @@ func NewProxier(
 	if minSyncPeriod > syncPeriod {
 		return nil, fmt.Errorf("min-sync (%v) must be < sync(%v)", minSyncPeriod, syncPeriod)
 	}
-
+	execer := utilexec.New()
 	ipvs := ipvsutil.NewEnnIpvs()
 	//err := ipvsInterface.InitIpvsInterface()
 	glog.Infof("insmod ipvs module")
@@ -122,6 +124,7 @@ func NewProxier(
 		serviceMap:    make(util.ProxyServiceMap),
 		endpointsMap:  make(util.ProxyEndpointMap),
 		masqueradeAll: masqueradeAll,
+		exec:          execer,
 		clusterCIDR:   clusterCIDR,
 		hostname:      hostname,
 		nodeIP:        nodeIP,
@@ -172,8 +175,8 @@ func (proxier *Proxier) Sync(){
 
 	proxier.mu.Lock()
 	defer proxier.mu.Unlock()
-	proxier.serviceMap = util.BuildServiceMap()
-	proxier.endpointsMap = util.BuildEndPointsMap(proxier.hostname)
+	proxier.serviceMap, _ = util.BuildServiceMap(proxier.serviceMap)
+	proxier.endpointsMap, _ = util.BuildEndPointsMap(proxier.hostname, proxier.endpointsMap)
 	proxier.syncProxyRules()
 
 }
@@ -375,7 +378,7 @@ func (proxier *Proxier) OnEndpointsUpdate(endpointsUpdate *watchers.EndpointsUpd
 		glog.Infof("Skipping ipvs server sync because local cache is not synced yet")
 	}
 
-	newEndpointsMap := util.BuildEndPointsMap(proxier.hostname)
+	newEndpointsMap, staleConnections := util.BuildEndPointsMap(proxier.hostname, proxier.endpointsMap)
 
 	if len(newEndpointsMap) != len(proxier.endpointsMap) || !reflect.DeepEqual(newEndpointsMap, proxier.endpointsMap) {
 		proxier.endpointsMap = newEndpointsMap
@@ -383,7 +386,7 @@ func (proxier *Proxier) OnEndpointsUpdate(endpointsUpdate *watchers.EndpointsUpd
 	} else {
 		glog.Infof("Skipping proxy ipvs rule sync on endpoint update because nothing changed")
 	}
-
+	util.DeleteEndpointConnections(proxier.exec, proxier.serviceMap, staleConnections)
 }
 
 func (proxier *Proxier) OnServicesUpdate(servicesUpdate *watchers.ServicesUpdate){
@@ -394,7 +397,7 @@ func (proxier *Proxier) OnServicesUpdate(servicesUpdate *watchers.ServicesUpdate
 		glog.Infof("Skipping ipvs server sync because local cache is not synced yet")
 	}
 
-	newServiceMap := util.BuildServiceMap()
+	newServiceMap, staleUDPServices := util.BuildServiceMap(proxier.serviceMap)
 
 	if len(newServiceMap) != len(proxier.serviceMap) || !reflect.DeepEqual(newServiceMap, proxier.serviceMap) {
 		proxier.serviceMap = newServiceMap
@@ -402,7 +405,7 @@ func (proxier *Proxier) OnServicesUpdate(servicesUpdate *watchers.ServicesUpdate
 	} else {
 		glog.Infof("Skipping proxy ipvs rule sync on service update because nothing changed")
 	}
-
+	util.DeleteServiceConnections(proxier.exec, staleUDPServices.List())
 }
 
 

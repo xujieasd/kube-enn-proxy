@@ -9,6 +9,8 @@ import (
 
 	"github.com/golang/glog"
 
+	"net"
+	"strconv"
 )
 
 type EndpointsInfo struct {
@@ -20,9 +22,15 @@ type EndpointsInfo struct {
 type ProxyEndpointMap map[proxy.ServicePortName][]*EndpointsInfo
 
 
-func BuildEndPointsMap(hostname string) ProxyEndpointMap{
+type EndpointServicePair struct {
+	Endpoint        string
+	ServicePortName proxy.ServicePortName
+}
+
+func BuildEndPointsMap(hostname string, curMap ProxyEndpointMap) (ProxyEndpointMap, map[EndpointServicePair]bool){
 	glog.Infof("BuildEndPointMap")
 	endpointsMap := make(ProxyEndpointMap)
+	staleSet := make(map[EndpointServicePair]bool)
 
 	for _, endpoints := range watchers.EndpointsWatchConfig.List() {
 
@@ -59,8 +67,28 @@ func BuildEndPointsMap(hostname string) ProxyEndpointMap{
 		}
 	}
 
+	// Check stale connections against endpoints missing from the update.
+	// TODO: we should really only mark a connection stale if the proto was UDP
+	// and the (ip, port, proto) was removed from the endpoints.
+	for svcPort, epList := range curMap {
+		for _, ep := range epList {
+			stale := true
 
-	return endpointsMap
+			for i := range endpointsMap[svcPort] {
+				if *endpointsMap[svcPort][i] == *ep {
+					stale = false
+					break
+				}
+			}
+			if stale {
+				endpoint := net.JoinHostPort(ep.Ip,strconv.Itoa(ep.Port))
+				glog.Infof("Stale endpoint %v -> %v", svcPort, endpoint)
+				staleSet[EndpointServicePair{Endpoint: endpoint, ServicePortName: svcPort}] = true
+			}
+		}
+	}
+
+	return endpointsMap, staleSet
 }
 
 func newEndpointsInfo(address api.EndpointAddress, port api.EndpointPort, hostname string) *EndpointsInfo {

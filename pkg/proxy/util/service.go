@@ -10,6 +10,7 @@ import (
 
 	"github.com/golang/glog"
 
+	"k8s.io/apimachinery/pkg/util/sets"
 )
 
 type ServiceInfo struct {
@@ -22,7 +23,7 @@ type ServiceInfo struct {
 
 type ProxyServiceMap map[proxy.ServicePortName]*ServiceInfo
 
-func BuildServiceMap() ProxyServiceMap{
+func BuildServiceMap(oldServiceMap ProxyServiceMap) (ProxyServiceMap, sets.String){
 
 	glog.Infof("BuildServiceMap")
 	newServiceMap := make(ProxyServiceMap)
@@ -60,7 +61,18 @@ func BuildServiceMap() ProxyServiceMap{
 
 	}
 
-	return newServiceMap
+	staleUDPServices := sets.NewString()
+	// Remove serviceports missing from the update.
+	for name, info := range oldServiceMap {
+		if _, exists := newServiceMap[name]; !exists {
+			glog.V(1).Infof("Removing service %q", name)
+			if info.Protocol == strings.ToLower(string(api.ProtocolUDP)){
+				staleUDPServices.Insert(info.ClusterIP.String())
+			}
+		}
+	}
+
+	return newServiceMap, staleUDPServices
 
 }
 
