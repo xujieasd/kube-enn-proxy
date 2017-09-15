@@ -273,55 +273,6 @@ func (proxier *Proxier) syncProxyRules(){
 
 		}
 
-		/* capture node port */
-
-		if serviceInfo.NodePort != 0{
-			ipvs_node_service := &ipvsutil.Service{
-				ClusterIP:        proxier.nodeIP,
-				Port:             serviceInfo.NodePort,
-				Protocol:         serviceInfo.Protocol,
-				Scheduler:        ipvsutil.DEFAULSCHE,
-				SessionAffinity:  serviceInfo.SessionAffinity,
-			}
-
-			/* handle ipvs service add */
-			err = proxier.ipvsInterface.AddIpvsService(ipvs_node_service)
-			if err != nil{
-				glog.Errorf("syncProxyRules: add ipvs node service feild: %s",err)
-				continue
-			}
-			nodeKey := activeServiceKey{
-				ip:       ipvs_node_service.ClusterIP.String(),
-				port:     ipvs_node_service.Port,
-				protocol: ipvs_node_service.Protocol,
-			}
-			activeServiceMap[nodeKey] = make([]activeServiceValue,0)
-
-			/* handle ipvs destination add */
-			for _, endpointinfo := range proxier.endpointsMap[svcName]{
-				ipvs_server := &ipvsutil.Server{
-					Ip:      endpointinfo.Ip,
-					Port:    endpointinfo.Port,
-					Weight:  ipvsutil.DEFAULWEIGHT,
-				}
-
-				endpointValue := activeServiceValue{
-					ip:    ipvs_server.Ip,
-					port:  ipvs_server.Port,
-				}
-
-				err = proxier.ipvsInterface.AddIpvsServer(ipvs_node_service, ipvs_server)
-				if err != nil{
-					glog.Errorf("syncProxyRules: add ipvs destination feild: %s",err)
-					continue
-
-				}
-
-				activeServiceMap[nodeKey] = append(activeServiceMap[nodeKey],endpointValue)
-
-			}
-
-		}
 
 		/* Capture externalIPs */
 
@@ -405,6 +356,82 @@ func (proxier *Proxier) syncProxyRules(){
 
 				activeServiceMap[externalIPKey] = append(activeServiceMap[externalIPKey],endpointValue)
 			}
+		}
+
+
+
+		/* capture node port */
+
+		if serviceInfo.NodePort != 0{
+
+			// Hold the local port open so no other process can open it
+			// (because the socket might open but it would never work).
+			lp := util.LocalPort{
+				Desc:     "nodePort for " + svcName.String(),
+				Ip:       "",
+				Port:     serviceInfo.NodePort,
+				Protocol: protocol,
+			}
+			if proxier.portsMap[lp] != nil {
+				glog.V(4).Infof("Port %s was open before and is still needed", lp.String())
+				replacementPortsMap[lp] = proxier.portsMap[lp]
+			} else {
+				socket, err := proxier.portMapper.OpenLocalPort(&lp)
+				if err != nil {
+					glog.Errorf("can't open %s, skipping this nodePort: %v", lp.String(), err)
+					continue
+				}
+				if lp.Protocol == "udp" {
+					util.ClearUdpConntrackForPort(proxier.exec, lp.Port)
+				}
+				replacementPortsMap[lp] = socket
+			} // We're holding the port, so it's OK to install ipvs rules.
+
+			ipvs_node_service := &ipvsutil.Service{
+				ClusterIP:        proxier.nodeIP,
+				Port:             serviceInfo.NodePort,
+				Protocol:         serviceInfo.Protocol,
+				Scheduler:        ipvsutil.DEFAULSCHE,
+				SessionAffinity:  serviceInfo.SessionAffinity,
+			}
+
+			/* handle ipvs service add */
+			err = proxier.ipvsInterface.AddIpvsService(ipvs_node_service)
+			if err != nil{
+				glog.Errorf("syncProxyRules: add ipvs node service feild: %s",err)
+				continue
+			}
+			nodeKey := activeServiceKey{
+				ip:       ipvs_node_service.ClusterIP.String(),
+				port:     ipvs_node_service.Port,
+				protocol: ipvs_node_service.Protocol,
+			}
+			activeServiceMap[nodeKey] = make([]activeServiceValue,0)
+
+			/* handle ipvs destination add */
+			for _, endpointinfo := range proxier.endpointsMap[svcName]{
+				ipvs_server := &ipvsutil.Server{
+					Ip:      endpointinfo.Ip,
+					Port:    endpointinfo.Port,
+					Weight:  ipvsutil.DEFAULWEIGHT,
+				}
+
+				endpointValue := activeServiceValue{
+					ip:    ipvs_server.Ip,
+					port:  ipvs_server.Port,
+				}
+
+				err = proxier.ipvsInterface.AddIpvsServer(ipvs_node_service, ipvs_server)
+				if err != nil{
+					glog.Errorf("syncProxyRules: add ipvs destination feild: %s",err)
+					continue
+
+				}
+
+				activeServiceMap[nodeKey] = append(activeServiceMap[nodeKey],endpointValue)
+
+			}
+
 		}
 
 
