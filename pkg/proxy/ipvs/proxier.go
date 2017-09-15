@@ -360,6 +360,51 @@ func (proxier *Proxier) syncProxyRules(){
 				}
 			} // We're holding the port, so it's OK to install ipvs rules.
 
+			ip := net.ParseIP(externalIP)
+			ipvs_externalIp_service := &ipvsutil.Service{
+				ClusterIP:       ip,
+				Port:            serviceInfo.Port,
+				Protocol:        serviceInfo.Protocol,
+				Scheduler:       ipvsutil.DEFAULSCHE,
+				SessionAffinity: serviceInfo.SessionAffinity,
+
+			}
+			/* handle ipvs service add */
+			err = proxier.ipvsInterface.AddIpvsService(ipvs_externalIp_service)
+			if err != nil{
+				glog.Errorf("syncProxyRules: add ipvs node service feild: %s",err)
+				continue
+			}
+
+			externalIPKey := activeServiceKey{
+				ip:       ipvs_externalIp_service.ClusterIP.String(),
+				port:     ipvs_externalIp_service.Port,
+				protocol: ipvs_externalIp_service.Protocol,
+			}
+			activeServiceMap[externalIPKey] = make([]activeServiceValue,0)
+
+			/* handle ipvs destination add */
+			for _, endpointinfo := range proxier.endpointsMap[svcName]{
+				ipvs_server := &ipvsutil.Server{
+					Ip:      endpointinfo.Ip,
+					Port:    endpointinfo.Port,
+					Weight:  ipvsutil.DEFAULWEIGHT,
+				}
+
+				endpointValue := activeServiceValue{
+					ip:    ipvs_server.Ip,
+					port:  ipvs_server.Port,
+				}
+
+				err = proxier.ipvsInterface.AddIpvsServer(ipvs_externalIp_service, ipvs_server)
+				if err != nil{
+					glog.Errorf("syncProxyRules: add ipvs destination feild: %s",err)
+					continue
+
+				}
+
+				activeServiceMap[externalIPKey] = append(activeServiceMap[externalIPKey],endpointValue)
+			}
 		}
 
 
