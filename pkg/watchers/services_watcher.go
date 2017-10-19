@@ -85,7 +85,7 @@ func (sw *ServicesWatcher) servicesUpdate(old, obj interface{}){
 
 func (sw *ServicesWatcher) RegisterHandler(handler ServicesUpdatesHandler) {
 	sw.broadcaster.Add(util.ListenerFunc(func(instance interface{}) {
-		glog.Infof("RegisterHandler: Calling handler.OnServicesUpdate()")
+		glog.V(2).Infof("RegisterHandler: Calling handler.OnServicesUpdate()")
 		handler.OnServicesUpdate(instance.(*ServicesUpdate))
 	}))
 }

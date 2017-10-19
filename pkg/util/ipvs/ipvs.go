@@ -178,13 +178,6 @@ func (ei *EnnIpvs) AddIpvsService(service *Service) error{
 
 	protocol := ToProtocolNumber(service)
 
-	glog.Infof("AddIpvsService: add service: %s:%s:%s",
-		service.ClusterIP.String(),
-		//libipvs.Protocol(protocol),
-		service.Protocol,
-		strconv.Itoa(int(service.Port)),
-	)
-
 	//svcs, err := ei.Ipvs_handle.ListServices()
 	svcs, err := ei.Ipvs_handle.GetServices()
 	if err != nil {
@@ -194,10 +187,17 @@ func (ei *EnnIpvs) AddIpvsService(service *Service) error{
 	for _, svc := range svcs {
 		if strings.Compare(service.ClusterIP.String(), svc.Address.String()) == 0 &&
 			/*libipvs.Protocol(protocol)*/ protocol == svc.Protocol && uint16(service.Port) == svc.Port {
-			glog.Info("AddIpvsService: ipvs service already exists")
+			glog.V(4).Infof("AddIpvsService: ipvs service already exists")
 			return nil
 		}
 	}
+
+	glog.V(2).Infof("AddIpvsService: add service: %s:%s:%s",
+		service.ClusterIP.String(),
+		//libipvs.Protocol(protocol),
+		service.Protocol,
+		strconv.Itoa(int(service.Port)),
+	)
 
 	svc, err:= CreateLibIpvsService(service)
 
@@ -208,7 +208,7 @@ func (ei *EnnIpvs) AddIpvsService(service *Service) error{
 	if err := ei.Ipvs_handle.NewService(svc); err != nil {
 		return fmt.Errorf("AddIpvsService: create service failed")
 	}
-	glog.Infof("AddIpvsService: added service done")
+	glog.V(4).Infof("AddIpvsService: added service done")
 
 
 	return nil
@@ -218,7 +218,7 @@ func (ei *EnnIpvs) DeleteIpvsService(service *Service) error{
 
 	//protocol := ToProtocolNumber(service)
 
-	glog.Infof("DeleteIpvsService: delete service: %s:%s:%s",
+	glog.V(2).Infof("DeleteIpvsService: delete service: %s:%s:%s",
 		service.ClusterIP.String(),
 		//libipvs.Protocol(protocol),
 		service.Protocol,
@@ -234,7 +234,7 @@ func (ei *EnnIpvs) DeleteIpvsService(service *Service) error{
 	if err := ei.Ipvs_handle.DelService(svc); err != nil {
 		return fmt.Errorf("DeleteIpvsService: delete service failed")
 	}
-	glog.Infof("DeleteIpvsService: delete service done")
+	glog.V(4).Infof("DeleteIpvsService: delete service done")
 
 	return nil
 }
@@ -248,7 +248,19 @@ func (ei *EnnIpvs) AddIpvsServer(service *Service, server *Server) error{
 		return err
 	}
 
-	glog.Infof("AddIpvsServer: add destination %s:%s to the service %s:%s:%s",
+	err = ei.Ipvs_handle.NewDestination(svc, dest)
+	if err == nil {
+		glog.V(2).Infof("AddIpvsDestination: success")
+		return nil
+	}
+
+	if strings.Contains(err.Error(), IPVS_SERVER_EXISTS) {
+		glog.V(4).Infof("AddIpvsServer: already added")
+	} else {
+		return fmt.Errorf("AddIpvsServer: failed")
+	}
+
+	glog.V(2).Infof("AddIpvsServer: add destination %s:%s to the service %s:%s:%s",
 		dest.Address,
 		strconv.Itoa(int(dest.Port)),
 		svc.Address,
@@ -256,18 +268,6 @@ func (ei *EnnIpvs) AddIpvsServer(service *Service, server *Server) error{
 		ToProtocolString(svc),
 		strconv.Itoa(int(svc.Port)),
 	)
-
-	err = ei.Ipvs_handle.NewDestination(svc, dest)
-	if err == nil {
-		glog.Infof("AddIpvsServer: success")
-		return nil
-	}
-
-	if strings.Contains(err.Error(), IPVS_SERVER_EXISTS) {
-		glog.Infof("AddIpvsServer: already added")
-	} else {
-		return fmt.Errorf("AddIpvsServer: failed")
-	}
 
 	return nil
 }
@@ -281,7 +281,7 @@ func (ei *EnnIpvs) DeleteIpvsServer(service *Service, server *Server) error{
 		return err
 	}
 
-	glog.Infof("DeleteIpvsServer: delete destination %s:%s to the service %s:%s:%s",
+	glog.V(2).Infof("DeleteIpvsServer: delete destination %s:%s to the service %s:%s:%s",
 		dest.Address,
 		strconv.Itoa(int(dest.Port)),
 		svc.Address,
@@ -295,7 +295,7 @@ func (ei *EnnIpvs) DeleteIpvsServer(service *Service, server *Server) error{
 		return fmt.Errorf("DelDestination: failed")
 	}
 
-	glog.Infof("DelDestination: success")
+	glog.V(4).Infof("DelDestination: success")
 	return nil
 }
 
@@ -330,7 +330,7 @@ func (ei *EnnIpvs) GetDummyLink() (netlink.Link, error){
 	link, err := netlink.LinkByName(ENN_DUMMY)
 	if err != nil  {
 		if err.Error() == IFACE_NOT_FOUND {
-			glog.Infof("GetDummyLink: get dummy link failed, then create dummy link")
+			glog.V(4).Infof("GetDummyLink: get dummy link failed, then create dummy link")
 			err = ei.AddDummyLink()
 			if (err != nil) {
 				panic("GetDummyLink: add dummy link failed:  " + err.Error())

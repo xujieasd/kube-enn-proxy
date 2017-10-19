@@ -27,7 +27,7 @@ type ProxyServiceMap map[proxy.ServicePortName]*ServiceInfo
 
 func BuildServiceMap(oldServiceMap ProxyServiceMap) (ProxyServiceMap, sets.String){
 
-	glog.Infof("BuildServiceMap")
+	glog.V(2).Infof("BuildServiceMap")
 	newServiceMap := make(ProxyServiceMap)
 
 	for _, service := range watchers.ServiceWatchConfig.List(){
@@ -39,12 +39,12 @@ func BuildServiceMap(oldServiceMap ProxyServiceMap) (ProxyServiceMap, sets.Strin
 
 		// if ClusterIP is "None" or empty, skip proxying
 		if service.Spec.ClusterIP == "None" || service.Spec.ClusterIP == "" {
-			glog.Infof("Skipping service %s due to clusterIP is null", svcName)
+			glog.V(2).Infof("Skipping service %s due to clusterIP is null", svcName)
 			continue
 		}
 		// Even if ClusterIP is set, ServiceTypeExternalName services don't get proxied
 		if service.Spec.Type == "ExternalName" {
-			glog.Infof("Skipping service %s due to Type=ExternalName", svcName)
+			glog.V(2).Infof("Skipping service %s due to Type=ExternalName", svcName)
 			continue
 		}
 
@@ -67,7 +67,7 @@ func BuildServiceMap(oldServiceMap ProxyServiceMap) (ProxyServiceMap, sets.Strin
 	// Remove serviceports missing from the update.
 	for name, info := range oldServiceMap {
 		if _, exists := newServiceMap[name]; !exists {
-			glog.V(1).Infof("Removing service %q", name)
+			glog.V(2).Infof("Removing service %q", name)
 			if info.Protocol == strings.ToLower(string(api.ProtocolUDP)){
 				staleUDPServices.Insert(info.ClusterIP.String())
 			}

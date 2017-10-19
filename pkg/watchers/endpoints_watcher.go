@@ -86,7 +86,7 @@ func (ew *EndpointsWatcher) endpointsUpdate(old, obj interface{}){
 
 func (ew *EndpointsWatcher) RegisterHandler(handler EndpointsUpdatesHandler) {
 	ew.broadcaster.Add(util.ListenerFunc(func(instance interface{}) {
-		glog.Infof("RegisterHandler: Calling handler.OnEndpointsUpdate()")
+		glog.V(2).Infof("RegisterHandler: Calling handler.OnEndpointsUpdate()")
 		handler.OnEndpointsUpdate(instance.(*EndpointsUpdate))
 	}))
 }

@@ -58,7 +58,7 @@ func DeleteEndpointConnections(execer exec.Interface, serviceMap ProxyServiceMap
 	for epSvcPair := range connectionMap {
 		if svcInfo, ok := serviceMap[epSvcPair.ServicePortName]; ok && svcInfo.Protocol == strings.ToLower(string(api.ProtocolUDP)) {
 			endpointIP := strings.Split(epSvcPair.Endpoint, ":")[0]
-			glog.Infof("Deleting connection tracking state for service IP %s, endpoint IP %s", svcInfo.ClusterIP.String(), endpointIP)
+			glog.V(2).Infof("Deleting connection tracking state for service IP %s, endpoint IP %s", svcInfo.ClusterIP.String(), endpointIP)
 			err := ExecConntrackTool(execer, "-D", "--orig-dst", svcInfo.ClusterIP.String(), "--dst-nat", endpointIP, "-p", "udp")
 			if err != nil && !strings.Contains(err.Error(), noConnectionToDelete) {
 				// TODO: Better handling for deletion failure. When failure occur, stale udp connection may not get flushed.
@@ -74,7 +74,7 @@ func DeleteEndpointConnections(execer exec.Interface, serviceMap ProxyServiceMap
 // for the UDP connections specified by the given service IPs
 func DeleteServiceConnections(execer exec.Interface, svcIPs []string) {
 	for _, ip := range svcIPs {
-		glog.Infof("Deleting connection tracking state for service IP %s", ip)
+		glog.V(2).Infof("Deleting connection tracking state for service IP %s", ip)
 		err := ExecConntrackTool(execer, "-D", "--orig-dst", ip, "-p", "udp")
 		if err != nil && !strings.Contains(err.Error(), noConnectionToDelete) {
 			// TODO: Better handling for deletion failure. When failure occur, stale udp connection may not get flushed.

@@ -94,7 +94,7 @@ func NewProxier(
 	execer := utilexec.New()
 	ipvs := ipvsutil.NewEnnIpvs()
 	//err := ipvsInterface.InitIpvsInterface()
-	glog.Infof("insmod ipvs module")
+	glog.V(0).Infof("insmod ipvs module")
 
 	err := setNetFlag()
 	if err != nil{
@@ -162,7 +162,7 @@ func FakeProxier() *Proxier{
 
 func (proxier *Proxier) SyncLoop(stopCh <-chan struct{}, wg *sync.WaitGroup){
 
-	glog.Infof("Run IPVS Proxier")
+	glog.V(2).Infof("Run IPVS Proxier")
 	t := time.NewTicker(proxier.syncPeriod)
 	defer t.Stop()
 	defer wg.Done()
@@ -176,10 +176,10 @@ func (proxier *Proxier) SyncLoop(stopCh <-chan struct{}, wg *sync.WaitGroup){
 	for {
 		select {
 		case <-t.C:
-			glog.Infof("Periodic sync")
+			glog.V(2).Infof("Periodic sync")
 			proxier.Sync()
 		case <-stopCh:
-			glog.Infof("Stop sync")
+			glog.V(2).Infof("Stop sync")
 			return
 		}
 	}
@@ -199,7 +199,7 @@ func (proxier *Proxier) syncProxyRules(){
 
 	start := time.Now()
 	defer func() {
-		glog.Infof("syncProxyRules took %v", time.Since(start))
+		glog.V(2).Infof("syncProxyRules took %v", time.Since(start))
 	}()
 
 	activeServiceMap := make(map[activeServiceKey][]activeServiceValue)
@@ -460,12 +460,12 @@ func (proxier *Proxier) syncProxyRules(){
 			port:     oldSvc_t.Port,
 			protocol: oldSvc_t.Protocol,
 		}
-		glog.Infof("check active service: %s:%d:%s",serviceKey.ip,serviceKey.port,serviceKey.protocol)
+		glog.V(4).Infof("check active service: %s:%d:%s",serviceKey.ip,serviceKey.port,serviceKey.protocol)
 		activeEndpoints, ok := activeServiceMap[serviceKey]
 
 		/* unused service info so remove ipvs config and dummy cluster ip*/
 		if !ok{
-			glog.Infof("delet unused ipvs service config and dummy cluster ip")
+			glog.V(2).Infof("delete unused ipvs service config and dummy cluster ip: %s:%d:%s",serviceKey.ip,serviceKey.port,serviceKey.protocol)
 			//err = proxier.ipvsInterface.DeleteIpvsService(oldSvc)
 			err = proxier.ipvsInterface.DeleteIpvsService(oldSvc_t)
 
@@ -486,15 +486,16 @@ func (proxier *Proxier) syncProxyRules(){
 
 		} else {
 			/* check unused dst info so remove ipvs dst config */
+			glog.V(4).Infof("check unused dst info so remove ipvs dst config")
 			oldDsts, err := proxier.ipvsInterface.ListIpvsServer(oldSvc)
 			if err != nil{
 				panic(err)
 			}
 			for _, oldDst := range oldDsts{
-				glog.Infof("old dst %s:%d", oldDst.Ip,oldDst.Port)
+				glog.V(4).Infof("old dst %s:%d", oldDst.Ip,oldDst.Port)
 				isActive := false
 				for _, activeEP := range activeEndpoints{
-					glog.Infof("active endpoints %s:%d", activeEP.ip, activeEP.port)
+					glog.V(4).Infof("active endpoints %s:%d", activeEP.ip, activeEP.port)
 					if strings.Compare(activeEP.ip,oldDst.Ip) == 0 && activeEP.port == oldDst.Port{
 						isActive = true
 						glog.Infof("endpoints %s:%d still active",activeEP.ip,activeEP.port)
@@ -502,7 +503,7 @@ func (proxier *Proxier) syncProxyRules(){
 					}
 				}
 				if !isActive{
-					glog.Infof("delete unused ipvs destination")
+					glog.V(2).Infof("delete unused ipvs destination %s:%d from %s:%d", oldDst.Ip, oldDst.Port, serviceKey.ip,serviceKey.port)
 					//err = proxier.ipvsInterface.DeleteIpvsServer(oldSvc,oldDst)
 					err = proxier.ipvsInterface.DeleteIpvsServer(oldSvc_t,oldDst)
 					if err != nil{
@@ -549,7 +550,7 @@ func (proxier *Proxier) OnEndpointsUpdate(endpointsUpdate *watchers.EndpointsUpd
 	defer proxier.mu.Unlock()
 
 	if !(watchers.ServiceWatchConfig.HasSynced() && watchers.EndpointsWatchConfig.HasSynced()) {
-		glog.Infof("Skipping ipvs server sync because local cache is not synced yet")
+		glog.V(2).Infof("Skipping ipvs server sync because local cache is not synced yet")
 	}
 
 	newEndpointsMap, staleConnections := util.BuildEndPointsMap(proxier.hostname, proxier.endpointsMap)
@@ -558,7 +559,7 @@ func (proxier *Proxier) OnEndpointsUpdate(endpointsUpdate *watchers.EndpointsUpd
 		proxier.endpointsMap = newEndpointsMap
 		proxier.syncProxyRules()
 	} else {
-		glog.Infof("Skipping proxy ipvs rule sync on endpoint update because nothing changed")
+		glog.V(2).Infof("Skipping proxy ipvs rule sync on endpoint update because nothing changed")
 	}
 	util.DeleteEndpointConnections(proxier.exec, proxier.serviceMap, staleConnections)
 }
@@ -568,7 +569,7 @@ func (proxier *Proxier) OnServicesUpdate(servicesUpdate *watchers.ServicesUpdate
 	defer proxier.mu.Unlock()
 
 	if !(watchers.ServiceWatchConfig.HasSynced() && watchers.EndpointsWatchConfig.HasSynced()) {
-		glog.Infof("Skipping ipvs server sync because local cache is not synced yet")
+		glog.V(2).Infof("Skipping ipvs server sync because local cache is not synced yet")
 	}
 
 	newServiceMap, staleUDPServices := util.BuildServiceMap(proxier.serviceMap)
@@ -577,7 +578,7 @@ func (proxier *Proxier) OnServicesUpdate(servicesUpdate *watchers.ServicesUpdate
 		proxier.serviceMap = newServiceMap
 		proxier.syncProxyRules()
 	} else {
-		glog.Infof("Skipping proxy ipvs rule sync on service update because nothing changed")
+		glog.V(2).Infof("Skipping proxy ipvs rule sync on service update because nothing changed")
 	}
 	util.DeleteServiceConnections(proxier.exec, staleUDPServices.List())
 }
@@ -593,7 +594,7 @@ func CanUseIpvs() (bool, error){
 
 func (proxier *Proxier) createIPtablesMASQ() error{
 
-	glog.Infof("createIPtablesMASQ: start")
+	glog.V(2).Infof("createIPtablesMASQ: start")
 	iptablehandler, err := iptables.New()
 	if err != nil {
 		return errors.New("createIPtablesMASQ: iptable init failed" + err.Error())
@@ -650,7 +651,7 @@ func (proxier *Proxier) CleanupLeftovers(){
 }
 
 func (proxier *Proxier) cleanUpIptablesMASQ() error{
-	glog.Infof("cleanUpIPtablesMASQ")
+	glog.V(0).Infof("cleanUpIPtablesMASQ")
 	iptablehandler, err := iptables.New()
 	if err != nil {
 		return errors.New("cleanUpIptablesMASQ: iptable init failed" + err.Error())
@@ -675,12 +676,12 @@ func (proxier *Proxier) cleanUpIptablesMASQ() error{
 }
 
 func (proxier *Proxier) cleanUpIpvs(){
-	glog.Infof("cleanUpIpvs")
+	glog.V(0).Infof("cleanUpIpvs")
 	proxier.ipvsInterface.FlushIpvs()
 }
 
 func (proxier *Proxier) cleanUpDummyLink(){
-	glog.Infof("cleanUpDummyLink")
+	glog.V(0).Infof("cleanUpDummyLink")
 	/* dummy cluster ip will clean up together with dummy link*/
 	proxier.ipvsInterface.DeleteDummyLink()
 }
@@ -691,7 +692,7 @@ func setNetFlag() error{
 	}
 
 	if val, err := getSysctl(sysctlBridgeCallIPTables); err == nil && val != 1 {
-		glog.Infof("missing br-netfilter module or unset sysctl br-nf-call-iptables; proxy may not work as intended")
+		glog.V(0).Infof("missing br-netfilter module or unset sysctl br-nf-call-iptables; proxy may not work as intended")
 	}
 
 	if err := setSysctl(sysctlVSConnTrack, 1); err != nil {

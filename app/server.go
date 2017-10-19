@@ -126,7 +126,7 @@ func CleanUpAndExit() {
 
 func (s *EnnProxyServer) Run() error{
 
-	glog.Infof("start run enn proxy")
+	glog.V(0).Infof("start run enn proxy")
 	var StopCh chan struct{}
 	var wg sync.WaitGroup
 
@@ -140,7 +140,7 @@ func (s *EnnProxyServer) Run() error{
 	signal.Notify(ch, syscall.SIGINT, syscall.SIGTERM)
 	<-ch
 
-	glog.Infof("get sys terminal and exit enn proxy")
+	glog.V(0).Infof("get sys terminal and exit enn proxy")
 	StopCh <- struct{}{}
 
 	err := s.StopWatcher()
