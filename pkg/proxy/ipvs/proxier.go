@@ -134,7 +134,7 @@ func NewProxier(
 	IpvsProxier := Proxier{
 		serviceMap:    make(util.ProxyServiceMap),
 		endpointsMap:  make(util.ProxyEndpointMap),
-		portsMap:       make(map[util.LocalPort]util.Closeable),
+		portsMap:      make(map[util.LocalPort]util.Closeable),
 		masqueradeAll: masqueradeAll,
 		exec:          execer,
 		clusterCIDR:   clusterCIDR,
