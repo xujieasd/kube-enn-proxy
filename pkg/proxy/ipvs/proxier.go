@@ -21,17 +21,19 @@ import (
 	"k8s.io/client-go/pkg/api"
 	"k8s.io/client-go/tools/record"
 
-	"github.com/coreos/go-iptables/iptables"
+	"kube-enn-proxy/pkg/util/coreos/go-iptables/iptables"
 
-	ipvsutil "kube-enn-proxy/pkg/util/ipvs"
+	utilipvs "kube-enn-proxy/pkg/util/ipvs"
+	//utiliptables "kube-enn-proxy/pkg/util/iptables"
 	utilexec "kube-enn-proxy/pkg/util/exec"
+	//utildbus "kube-enn-proxy/pkg/util/dbus"
 	"kube-enn-proxy/pkg/proxy/util"
 	"kube-enn-proxy/app/options"
 	"kube-enn-proxy/pkg/watchers"
 
 )
 
-//var ipvsInterface ipvsutil.Interface
+//var ipvsInterface utilipvs.Interface
 
 const (
 	sysctlBase               = "/proc/sys"
@@ -43,27 +45,28 @@ const (
 
 type Proxier struct {
 
-	mu		sync.Mutex
-	serviceMap      util.ProxyServiceMap
-	endpointsMap    util.ProxyEndpointMap
-	portsMap         map[util.LocalPort]util.Closeable
+	mu		    sync.Mutex
+	serviceMap          util.ProxyServiceMap
+	endpointsMap        util.ProxyEndpointMap
+	portsMap            map[util.LocalPort]util.Closeable
 
-	syncPeriod	time.Duration
-	minSyncPeriod   time.Duration
+	syncPeriod	    time.Duration
+	minSyncPeriod       time.Duration
 
 
-	masqueradeAll   bool
-	exec            utilexec.Interface
-	clusterCIDR     string
-	hostname        string
-	nodeIP          net.IP
-	scheduler       string
+	masqueradeAll       bool
+	exec                utilexec.Interface
+	clusterCIDR         string
+	hostname            string
+	nodeIP              net.IP
+	scheduler           string
 
-	client          *kubernetes.Clientset
+	client              *kubernetes.Clientset
 
-	ipvsInterface	ipvsutil.Interface
-	recorder        record.EventRecorder
-	portMapper      util.PortOpener
+	ipvsInterface	    utilipvs.Interface
+	//iptablesInterface   utiliptables.Interface
+	recorder            record.EventRecorder
+	portMapper          util.PortOpener
 
 }
 
@@ -91,8 +94,21 @@ func NewProxier(
 	if minSyncPeriod > syncPeriod {
 		return nil, fmt.Errorf("min-sync (%v) must be < sync(%v)", minSyncPeriod, syncPeriod)
 	}
+
+	//protocol := utiliptables.ProtocolIpv4
+	//if net.ParseIP(config.BindAddress).To4() == nil {
+	//	protocol = utiliptables.ProtocolIpv6
+	//}
+
+	//var iptInterface utiliptables.Interface
+	//var dbus utildbus.Interface
+
 	execer := utilexec.New()
-	ipvs := ipvsutil.NewEnnIpvs()
+	ipvs := utilipvs.NewEnnIpvs()
+
+	//dbus = utildbus.New()
+	//iptInterface = utiliptables.New(execer, dbus, protocol)
+
 	//err := ipvsInterface.InitIpvsInterface()
 	glog.V(0).Infof("insmod ipvs module")
 
@@ -122,7 +138,7 @@ func NewProxier(
 	if err != nil{
 		return nil, fmt.Errorf("NewProxier failure: GetNodeIP fall: %s", err.Error())
 	}
-	var scheduler = ipvsutil.DEFAULSCHE
+	var scheduler = utilipvs.DEFAULSCHE
 	if len(config.IpvsScheduler) != 0{
 		scheduler = config.IpvsScheduler
 	}
@@ -132,21 +148,22 @@ func NewProxier(
 	recorder := eventBroadcaster.NewRecorder(api.Scheme, clientv1.EventSource{Component: "kube-proxy", Host: hostname})
 
 	IpvsProxier := Proxier{
-		serviceMap:    make(util.ProxyServiceMap),
-		endpointsMap:  make(util.ProxyEndpointMap),
-		portsMap:      make(map[util.LocalPort]util.Closeable),
-		masqueradeAll: masqueradeAll,
-		exec:          execer,
-		clusterCIDR:   clusterCIDR,
-		hostname:      hostname,
-		nodeIP:        nodeIP,
-		scheduler:     scheduler,
-		syncPeriod:    syncPeriod,
-		minSyncPeriod: minSyncPeriod,
-		client:        clientset,
-		ipvsInterface: ipvs,
-		recorder:      recorder,
-		portMapper:    &util.ListenPortOpener{},
+		serviceMap:        make(util.ProxyServiceMap),
+		endpointsMap:      make(util.ProxyEndpointMap),
+		portsMap:          make(map[util.LocalPort]util.Closeable),
+		masqueradeAll:     masqueradeAll,
+		exec:              execer,
+		clusterCIDR:       clusterCIDR,
+		hostname:          hostname,
+		nodeIP:            nodeIP,
+		scheduler:         scheduler,
+		syncPeriod:        syncPeriod,
+		minSyncPeriod:     minSyncPeriod,
+		client:            clientset,
+		ipvsInterface:     ipvs,
+		//iptablesInterface: iptInterface,
+		recorder:          recorder,
+		portMapper:        &util.ListenPortOpener{},
 	}
 
 	return &IpvsProxier, nil
@@ -154,7 +171,7 @@ func NewProxier(
 }
 
 func FakeProxier() *Proxier{
-	ipvs := ipvsutil.NewEnnIpvs()
+	ipvs := utilipvs.NewEnnIpvs()
 	return &Proxier{
 		ipvsInterface: ipvs,
 	}
@@ -167,7 +184,8 @@ func (proxier *Proxier) SyncLoop(stopCh <-chan struct{}, wg *sync.WaitGroup){
 	defer t.Stop()
 	defer wg.Done()
 
-	err := proxier.createIPtablesMASQ()
+	glog.V(2).Infof("EnsureIPtablesMASQ: start")
+	err := proxier.EnsureIPtablesMASQ()
 	if err!= nil{
 		glog.Errorf("SyncLoop: create MASQ failed: %s", err)
 		return
@@ -189,6 +207,11 @@ func (proxier *Proxier) Sync(){
 
 	proxier.mu.Lock()
 	defer proxier.mu.Unlock()
+	err := proxier.EnsureIPtablesMASQ()
+	if err!= nil{
+		glog.Errorf("Sync: ennsure MASQ failed: %s", err)
+		return
+	}
 	proxier.serviceMap, _ = util.BuildServiceMap(proxier.serviceMap)
 	proxier.endpointsMap, _ = util.BuildEndPointsMap(proxier.hostname, proxier.endpointsMap)
 	proxier.syncProxyRules()
@@ -219,11 +242,11 @@ func (proxier *Proxier) syncProxyRules(){
 
 		/* capture cluster ip */
 
-		ipvs_cluster_service := &ipvsutil.Service{
+		ipvs_cluster_service := &utilipvs.Service{
 			ClusterIP:       serviceInfo.ClusterIP,
 			Port:            serviceInfo.Port,
 			Protocol:        serviceInfo.Protocol,
-			Scheduler:       ipvsutil.DEFAULSCHE,
+			Scheduler:       utilipvs.DEFAULSCHE,
 			SessionAffinity: serviceInfo.SessionAffinity,
 
 		}
@@ -252,10 +275,10 @@ func (proxier *Proxier) syncProxyRules(){
 
 		/* handle ipvs destination add */
 		for _, endpointinfo := range proxier.endpointsMap[svcName]{
-			ipvs_server := &ipvsutil.Server{
+			ipvs_server := &utilipvs.Server{
 				Ip:      endpointinfo.Ip,
 				Port:    endpointinfo.Port,
-				Weight:  ipvsutil.DEFAULWEIGHT,
+				Weight:  utilipvs.DEFAULWEIGHT,
 			}
 
 			endpointValue := activeServiceValue{
@@ -312,11 +335,11 @@ func (proxier *Proxier) syncProxyRules(){
 			} // We're holding the port, so it's OK to install ipvs rules.
 
 			ip := net.ParseIP(externalIP)
-			ipvs_externalIp_service := &ipvsutil.Service{
+			ipvs_externalIp_service := &utilipvs.Service{
 				ClusterIP:       ip,
 				Port:            serviceInfo.Port,
 				Protocol:        serviceInfo.Protocol,
-				Scheduler:       ipvsutil.DEFAULSCHE,
+				Scheduler:       utilipvs.DEFAULSCHE,
 				SessionAffinity: serviceInfo.SessionAffinity,
 
 			}
@@ -336,10 +359,10 @@ func (proxier *Proxier) syncProxyRules(){
 
 			/* handle ipvs destination add */
 			for _, endpointinfo := range proxier.endpointsMap[svcName]{
-				ipvs_server := &ipvsutil.Server{
+				ipvs_server := &utilipvs.Server{
 					Ip:      endpointinfo.Ip,
 					Port:    endpointinfo.Port,
-					Weight:  ipvsutil.DEFAULWEIGHT,
+					Weight:  utilipvs.DEFAULWEIGHT,
 				}
 
 				endpointValue := activeServiceValue{
@@ -387,11 +410,11 @@ func (proxier *Proxier) syncProxyRules(){
 				replacementPortsMap[lp] = socket
 			} // We're holding the port, so it's OK to install ipvs rules.
 
-			ipvs_node_service := &ipvsutil.Service{
+			ipvs_node_service := &utilipvs.Service{
 				ClusterIP:        proxier.nodeIP,
 				Port:             serviceInfo.NodePort,
 				Protocol:         serviceInfo.Protocol,
-				Scheduler:        ipvsutil.DEFAULSCHE,
+				Scheduler:        utilipvs.DEFAULSCHE,
 				SessionAffinity:  serviceInfo.SessionAffinity,
 			}
 
@@ -410,10 +433,10 @@ func (proxier *Proxier) syncProxyRules(){
 
 			/* handle ipvs destination add */
 			for _, endpointinfo := range proxier.endpointsMap[svcName]{
-				ipvs_server := &ipvsutil.Server{
+				ipvs_server := &utilipvs.Server{
 					Ip:      endpointinfo.Ip,
 					Port:    endpointinfo.Port,
-					Weight:  ipvsutil.DEFAULWEIGHT,
+					Weight:  utilipvs.DEFAULWEIGHT,
 				}
 
 				endpointValue := activeServiceValue{
@@ -454,7 +477,7 @@ func (proxier *Proxier) syncProxyRules(){
 			protocol: oldSvc.Protocol,
 		}
 		*/
-		oldSvc_t, err := ipvsutil.CreateInterService(oldSvc)
+		oldSvc_t, err := utilipvs.CreateInterService(oldSvc)
 		serviceKey := activeServiceKey{
 			ip:       oldSvc_t.ClusterIP.String(),
 			port:     oldSvc_t.Port,
@@ -592,12 +615,11 @@ func CanUseIpvs() (bool, error){
 	return true, nil
 }
 
-func (proxier *Proxier) createIPtablesMASQ() error{
+func (proxier *Proxier) EnsureIPtablesMASQ() error{
 
-	glog.V(2).Infof("createIPtablesMASQ: start")
 	iptablehandler, err := iptables.New()
 	if err != nil {
-		return errors.New("createIPtablesMASQ: iptable init failed" + err.Error())
+		return errors.New("EnsureIPtablesMASQ: iptable init failed" + err.Error())
 	}
 	/*
 	IPVS match options:
@@ -623,10 +645,18 @@ func (proxier *Proxier) createIPtablesMASQ() error{
 			"-m", "comment", "--comment", "IPVS SNAT MASQ ALL",
 			"-j", "MASQUERADE",
 		}
-		err = iptablehandler.AppendUnique("nat", "POSTROUTING", args...)
+		err = iptablehandler.PrependUnique("nat", "POSTROUTING", args...)
 		if err != nil {
-			return errors.New("createIPtablesMASQ: iptables masq all failed" + err.Error())
+			return errors.New("EnsureIPtablesMASQ: iptables masq all failed" + err.Error())
 		}
+		//if _, err := proxier.iptablesInterface.EnsureRule(
+		//	utiliptables.Prepend,
+		//	utiliptables.TableNAT,
+		//	utiliptables.ChainPostrouting,
+		//	args...,
+		//); err != nil {
+		//	return fmt.Errorf("Failed to ensure ipvs masq that %s chain %s: %v", utiliptables.TableNAT, utiliptables.ChainPostrouting, err)
+		//}
 	}
 	if len(proxier.clusterCIDR) > 0 {
 		args = []string{
@@ -635,10 +665,18 @@ func (proxier *Proxier) createIPtablesMASQ() error{
 			"-m", "comment", "--comment", "IPVS SNAT",
 			"-j", "MASQUERADE",
 		}
-		err = iptablehandler.AppendUnique("nat", "POSTROUTING", args...)
+		err = iptablehandler.PrependUnique("nat", "POSTROUTING", args...)
 		if err != nil {
-			return errors.New("createIPtablesMASQ: iptables masq failed" + err.Error())
+			return errors.New("EnsureIPtablesMASQ: iptables masq all failed" + err.Error())
 		}
+		//if _, err := proxier.iptablesInterface.EnsureRule(
+		//	utiliptables.Prepend,
+		//	utiliptables.TableNAT,
+		//	utiliptables.ChainPostrouting,
+		//	args...,
+		//); err != nil {
+		//	return fmt.Errorf("Failed to ensure ipvs masq that %s chain %s: %v", utiliptables.TableNAT, utiliptables.ChainPostrouting, err)
+		//}
 	}
 
 	return nil

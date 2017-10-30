@@ -26,7 +26,7 @@ import (
 // ErrExecutableNotFound is returned if the executable is not found.
 var ErrExecutableNotFound = osexec.ErrNotFound
 
-// Interface is an interface that presents a subset of the os/exec API.  Use this
+// Interface is an interface that presents a subset of the os/exec API. Use this
 // when you want to inject fakeable/mockable exec behavior.
 type Interface interface {
 	// Command returns a Cmd instance which can be used to run a single command.
@@ -38,17 +38,20 @@ type Interface interface {
 }
 
 // Cmd is an interface that presents an API that is very similar to Cmd from os/exec.
-// As more functionality is needed, this can grow.  Since Cmd is a struct, we will have
+// As more functionality is needed, this can grow. Since Cmd is a struct, we will have
 // to replace fields with get/set method pairs.
 type Cmd interface {
+	// Run runs the command to the completion.
+	Run() error
 	// CombinedOutput runs the command and returns its combined standard output
-	// and standard error.  This follows the pattern of package os/exec.
+	// and standard error. This follows the pattern of package os/exec.
 	CombinedOutput() ([]byte, error)
 	// Output runs the command and returns standard output, but not standard err
 	Output() ([]byte, error)
 	SetDir(dir string)
 	SetStdin(in io.Reader)
 	SetStdout(out io.Writer)
+	SetStderr(out io.Writer)
 	// Stops the command by sending SIGTERM. It is not guaranteed the
 	// process will stop before this function returns. If the process is not
 	// responding, an internal timer function will send a SIGKILL to force
@@ -57,7 +60,7 @@ type Cmd interface {
 }
 
 // ExitError is an interface that presents an API similar to os.ProcessState, which is
-// what ExitError from os/exec is.  This is designed to make testing a bit easier and
+// what ExitError from os/exec is. This is designed to make testing a bit easier and
 // probably loses some of the cross-platform properties of the underlying library.
 type ExitError interface {
 	String() string
@@ -87,6 +90,8 @@ func (executor *executor) LookPath(file string) (string, error) {
 // Wraps exec.Cmd so we can capture errors.
 type cmdWrapper osexec.Cmd
 
+var _ Cmd = &cmdWrapper{}
+
 func (cmd *cmdWrapper) SetDir(dir string) {
 	cmd.Dir = dir
 }
@@ -97,6 +102,15 @@ func (cmd *cmdWrapper) SetStdin(in io.Reader) {
 
 func (cmd *cmdWrapper) SetStdout(out io.Writer) {
 	cmd.Stdout = out
+}
+
+func (cmd *cmdWrapper) SetStderr(out io.Writer) {
+	cmd.Stderr = out
+}
+
+// Run is part of the Cmd interface.
+func (cmd *cmdWrapper) Run() error {
+	return (*osexec.Cmd)(cmd).Run()
 }
 
 // CombinedOutput is part of the Cmd interface.
