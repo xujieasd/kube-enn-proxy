@@ -7,7 +7,7 @@ import (
 	"net"
 	//"reflect"
 	"strconv"
-	"strings"
+//	"strings"
 	//"sync"
 	"syscall"
 	//"time"
@@ -18,6 +18,7 @@ import (
 	//"github.com/mqliang/libipvs"
 	libipvs "github.com/docker/libnetwork/ipvs"
 
+	"strings"
 )
 
 const (
@@ -248,6 +249,15 @@ func (ei *EnnIpvs) AddIpvsServer(service *Service, server *Server) error{
 		return err
 	}
 
+	glog.V(2).Infof("AddIpvsServer: add destination %s:%s to the service %s:%s:%s",
+		dest.Address,
+		strconv.Itoa(int(dest.Port)),
+		svc.Address,
+		//svc.Protocol,
+		ToProtocolString(svc),
+		strconv.Itoa(int(svc.Port)),
+	)
+
 	err = ei.Ipvs_handle.NewDestination(svc, dest)
 	if err == nil {
 		glog.V(2).Infof("AddIpvsDestination: success")
@@ -259,15 +269,6 @@ func (ei *EnnIpvs) AddIpvsServer(service *Service, server *Server) error{
 	} else {
 		return fmt.Errorf("AddIpvsServer: failed")
 	}
-
-	glog.V(2).Infof("AddIpvsServer: add destination %s:%s to the service %s:%s:%s",
-		dest.Address,
-		strconv.Itoa(int(dest.Port)),
-		svc.Address,
-		//svc.Protocol,
-		ToProtocolString(svc),
-		strconv.Itoa(int(svc.Port)),
-	)
 
 	return nil
 }
