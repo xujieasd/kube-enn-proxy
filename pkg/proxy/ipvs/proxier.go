@@ -31,6 +31,7 @@ import (
 	"kube-enn-proxy/app/options"
 	"kube-enn-proxy/pkg/watchers"
 
+	"github.com/vishvananda/netlink"
 )
 
 //var ipvsInterface utilipvs.Interface
@@ -50,6 +51,7 @@ type Proxier struct {
 	endpointsMap        util.ProxyEndpointMap
 	portsMap            map[util.LocalPort]util.Closeable
 	kernelIpvsMap       map[activeServiceKey][]activeServiceValue
+	kernelClusterMap    map[string]int
 
 	syncPeriod	    time.Duration
 	minSyncPeriod       time.Duration
@@ -153,6 +155,7 @@ func NewProxier(
 		endpointsMap:      make(util.ProxyEndpointMap),
 		portsMap:          make(map[util.LocalPort]util.Closeable),
 		kernelIpvsMap:     make(map[activeServiceKey][]activeServiceValue),
+		kernelClusterMap:  make(map[string]int),
 		masqueradeAll:     masqueradeAll,
 		exec:              execer,
 		clusterCIDR:       clusterCIDR,
@@ -239,6 +242,7 @@ func (proxier *Proxier) syncProxyRules(){
 	// Accumulate the set of local ports that we will be holding open once this update is complete
 	replacementPortsMap := map[util.LocalPort]util.Closeable{}
 	proxier.BuildIpvsMap()
+	proxier.BuildClusterMap(dummylink)
 
 	glog.V(3).Infof("Syncing ipvs Proxier rules")
 
@@ -257,11 +261,21 @@ func (proxier *Proxier) syncProxyRules(){
 		}
 
 		/* add cluster ip to dummy link */
-		err = proxier.ipvsInterface.AddDummyClusterIp(ipvs_cluster_service,dummylink)
-		if err != nil{
-			glog.Errorf("syncProxyRules: add dummy cluster ip feild: %s",err)
-			continue
+
+		_, ok := proxier.kernelClusterMap[ipvs_cluster_service.ClusterIP.String()]
+		if !ok{
+			glog.V(3).Infof("new cluter need to bind so add ip to dummy link: %s",ipvs_cluster_service.ClusterIP.String())
+			err = proxier.ipvsInterface.AddDummyClusterIp(ipvs_cluster_service,dummylink)
+			if err != nil{
+				glog.Errorf("syncProxyRules: add dummy cluster ip feild: %s",err)
+				continue
+			}
+
+		}else {
+			glog.V(4).Infof("old cluter ip which already binded: %s",ipvs_cluster_service.ClusterIP.String())
 		}
+
+
 
 		clusterKey := activeServiceKey{
 			ip:       ipvs_cluster_service.ClusterIP.String(),
@@ -283,7 +297,7 @@ func (proxier *Proxier) syncProxyRules(){
 			}
 
 		}else {
-			glog.V(3).Infof("old cluter ip %s:%d",ipvs_cluster_service.ClusterIP.String(),ipvs_cluster_service.Port)
+			glog.V(4).Infof("old cluter ip %s:%d",ipvs_cluster_service.ClusterIP.String(),ipvs_cluster_service.Port)
 		}
 
 		/* handle ipvs destination add */
@@ -676,6 +690,19 @@ func (proxier *Proxier) BuildIpvsMap() {
 	}
 
 	proxier.kernelIpvsMap = ipvsMap
+
+}
+
+func (proxier *Proxier) BuildClusterMap(dummylink netlink.Link) {
+
+	clusterMap := make(map[string]int)
+	addrs, _ := proxier.ipvsInterface.ListDuumyClusterIp(dummylink)
+
+	for _, addr := range addrs{
+		ipKey := addr.IP.String()
+		clusterMap[ipKey] = 1
+	}
+	proxier.kernelClusterMap = clusterMap
 
 }
 

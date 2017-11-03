@@ -74,6 +74,7 @@ type Interface interface {
 	DeleteDummyLink() error
 	AddDummyClusterIp(service *Service, link netlink.Link) error
 	DeleteDummyClusterIp(service *Service, link netlink.Link) error
+	ListDuumyClusterIp(link netlink.Link) ([]netlink.Addr, error)
 }
 
 func NewEnnIpvs() Interface{
@@ -430,6 +431,16 @@ func (ei *EnnIpvs) DeleteDummyClusterIp(service *Service, link netlink.Link) err
 	return nil
 }
 
+func (ei *EnnIpvs) ListDuumyClusterIp(link netlink.Link) ([]netlink.Addr, error){
+
+	addrs, err:= netlink.AddrList(link,syscall.AF_INET)
+	if err != nil {
+		glog.Errorf("ListDuumyClusterIp: list dummy link ip failed %s", err)
+		return nil, err
+	}
+	return addrs, nil
+}
+
 
 func CreateLibIpvsService(service *Service) (*libipvs.Service, error){
 
@@ -450,8 +461,10 @@ func CreateLibIpvsService(service *Service) (*libipvs.Service, error){
 		// set bit to enable service persistence
 		//svc.Flags.Flags |= (1 << 24)
 		//svc.Flags.Mask |= 0xFFFFFFFF
+		//svc.Flags |= 0x01
 		svc.Flags |= (1 << 24)
 		svc.Netmask |= 0xFFFFFFFF
+		// todo: need to refer to k8s 1.8
 		svc.Timeout = 180 * 60
 	}
 
