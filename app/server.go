@@ -15,6 +15,11 @@ import (
 	"kube-enn-proxy/app/options"
 	"kube-enn-proxy/pkg/proxy/ipvs"
 	"kube-enn-proxy/pkg/watchers"
+
+	utilipvs "kube-enn-proxy/pkg/util/ipvs"
+	//utiliptables "kube-enn-proxy/pkg/util/iptables"
+	utilexec "kube-enn-proxy/pkg/util/exec"
+	//utildbus "kube-enn-proxy/pkg/util/dbus"
 )
 
 type EnnProxyServer struct {
@@ -57,12 +62,33 @@ func NewEnnProxyServerDefault(config *options.KubeEnnProxyConfig) (*EnnProxyServ
 		panic(err.Error())
 	}
 
+	//protocol := utiliptables.ProtocolIpv4
+	//if net.ParseIP(config.BindAddress).To4() == nil {
+	//	protocol = utiliptables.ProtocolIpv6
+	//}
+
+	//var iptInterface utiliptables.Interface
+	//var dbus utildbus.Interface
+
+	execerInterface := utilexec.New()
+	ipvsInterface := utilipvs.NewEnnIpvs()
+	glog.V(0).Infof("insmod ipvs module")
+
+	//dbus = utildbus.New()
+	//iptInterface = utiliptables.New(execer, dbus, protocol)
+
+
 	err = tryIPVSProxy()
 	if(err != nil){
 		return nil, err
 	}
 
-	proxier, err := ipvs.NewProxier(clientset, config)
+	proxier, err := ipvs.NewProxier(
+		clientset,
+		config,
+		ipvsInterface,
+		execerInterface,
+	)
 	if(err != nil){
 		return nil, err
 	}
@@ -113,9 +139,10 @@ func tryIPVSProxy() error{
 		return err
 	}
 	if !use{
-		glog.Errorf("can not ipvs proxy")
-		return errors.New("can not ipvs proxy")
+		glog.Errorf("can not use ipvs proxy")
+		return errors.New("can not use ipvs proxy")
 	}
+	glog.V(1).Infof("now use IPVS proxy")
 	return nil
 }
 

@@ -32,6 +32,7 @@ import (
 	"kube-enn-proxy/pkg/watchers"
 
 	"github.com/vishvananda/netlink"
+	"k8s.io/apimachinery/pkg/util/sets"
 )
 
 //var ipvsInterface utilipvs.Interface
@@ -87,7 +88,9 @@ type activeServiceValue struct {
 
 func NewProxier(
 	clientset *kubernetes.Clientset,
-	config *options.KubeEnnProxyConfig,
+	config    *options.KubeEnnProxyConfig,
+        ipvs      utilipvs.Interface,
+        execer    utilexec.Interface,
 )(*Proxier, error){
 
 	syncPeriod    := config.IpvsSyncPeriod
@@ -97,23 +100,6 @@ func NewProxier(
 	if minSyncPeriod > syncPeriod {
 		return nil, fmt.Errorf("min-sync (%v) must be < sync(%v)", minSyncPeriod, syncPeriod)
 	}
-
-	//protocol := utiliptables.ProtocolIpv4
-	//if net.ParseIP(config.BindAddress).To4() == nil {
-	//	protocol = utiliptables.ProtocolIpv6
-	//}
-
-	//var iptInterface utiliptables.Interface
-	//var dbus utildbus.Interface
-
-	execer := utilexec.New()
-	ipvs := utilipvs.NewEnnIpvs()
-
-	//dbus = utildbus.New()
-	//iptInterface = utiliptables.New(execer, dbus, protocol)
-
-	//err := ipvsInterface.InitIpvsInterface()
-	glog.V(0).Infof("insmod ipvs module")
 
 	err := setNetFlag()
 	if err != nil{
@@ -125,10 +111,12 @@ func NewProxier(
 		masqueradeAll = true
 	}
 
-	/*todo need to handle when CIDR not set*/
 	clusterCIDR, err := util.GetPodCidrFromNodeSpec(clientset,config.HostnameOverride)
 	if err != nil{
 		return nil, fmt.Errorf("NewProxier failure: GetPodCidr fall: %s", err.Error())
+	}
+	if len(clusterCIDR) == 0 {
+		glog.Warningf("clusterCIDR not specified, unable to distinguish between internal and external traffic")
 	}
 
 	node, err := util.GetNode(clientset,config.HostnameOverride)
@@ -199,7 +187,7 @@ func (proxier *Proxier) SyncLoop(stopCh <-chan struct{}, wg *sync.WaitGroup){
 	for {
 		select {
 		case <-t.C:
-			glog.V(2).Infof("Periodic sync")
+			glog.V(4).Infof("Periodic sync")
 			proxier.Sync()
 		case <-stopCh:
 			glog.V(2).Infof("Stop sync")
@@ -764,9 +752,20 @@ func (proxier *Proxier) OnServicesUpdate(servicesUpdate *watchers.ServicesUpdate
 
 func CanUseIpvs() (bool, error){
 
-	/*todo: check whether IPVS can be used in nodes*/
+	out, err := utilexec.New().Command("cut", "-f1", "-d", " ", "/proc/modules").CombinedOutput()
+	if err != nil {
+		return false, err
+	}
 
-
+	mods := strings.Split(string(out), "\n")
+	wantModules := sets.NewString()
+	loadModules := sets.NewString()
+	wantModules.Insert(utilipvs.IpvsModules...)
+	loadModules.Insert(mods...)
+	modules := wantModules.Difference(loadModules).List()
+	if len(modules) != 0 {
+		return false, fmt.Errorf("Failed to load kernel modules: %v", modules)
+	}
 	return true, nil
 }
 
