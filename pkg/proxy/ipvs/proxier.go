@@ -30,6 +30,7 @@ import (
 	"kube-enn-proxy/pkg/proxy/util"
 	"kube-enn-proxy/app/options"
 	"kube-enn-proxy/pkg/watchers"
+	"kube-enn-proxy/pkg/proxy/healthcheck"
 
 	"github.com/vishvananda/netlink"
 	"k8s.io/apimachinery/pkg/util/sets"
@@ -71,6 +72,7 @@ type Proxier struct {
 	//iptablesInterface   utiliptables.Interface
 	recorder            record.EventRecorder
 	portMapper          util.PortOpener
+	healthChecker       healthcheck.Server
 
 }
 
@@ -138,6 +140,8 @@ func NewProxier(
 	eventBroadcaster := record.NewBroadcaster()
 	recorder := eventBroadcaster.NewRecorder(api.Scheme, clientv1.EventSource{Component: "kube-proxy", Host: hostname})
 
+	healthchecker := healthcheck.NewServer(hostname,recorder,nil,nil)
+
 	IpvsProxier := Proxier{
 		serviceMap:        make(util.ProxyServiceMap),
 		endpointsMap:      make(util.ProxyEndpointMap),
@@ -157,6 +161,7 @@ func NewProxier(
 		//iptablesInterface: iptInterface,
 		recorder:          recorder,
 		portMapper:        &util.ListenPortOpener{},
+		healthChecker:     healthchecker,
 	}
 
 	return &IpvsProxier, nil
@@ -725,7 +730,7 @@ func (proxier *Proxier) OnEndpointsUpdate(endpointsUpdate *watchers.EndpointsUpd
 		proxier.endpointsMap = newEndpointsMap
 		proxier.syncProxyRules()
 	} else {
-		glog.V(2).Infof("Skipping proxy ipvs rule sync on endpoint update because nothing changed")
+		glog.V(4).Infof("Skipping proxy ipvs rule sync on endpoint update because nothing changed")
 	}
 	util.DeleteEndpointConnections(proxier.exec, proxier.serviceMap, staleConnections)
 }
@@ -744,7 +749,7 @@ func (proxier *Proxier) OnServicesUpdate(servicesUpdate *watchers.ServicesUpdate
 		proxier.serviceMap = newServiceMap
 		proxier.syncProxyRules()
 	} else {
-		glog.V(2).Infof("Skipping proxy ipvs rule sync on service update because nothing changed")
+		glog.V(4).Infof("Skipping proxy ipvs rule sync on service update because nothing changed")
 	}
 	util.DeleteServiceConnections(proxier.exec, staleUDPServices.List())
 }
