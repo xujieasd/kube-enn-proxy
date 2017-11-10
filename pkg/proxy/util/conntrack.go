@@ -39,7 +39,7 @@ const noConnectionToDelete = "0 flow entries have been deleted"
 // https://github.com/docker/docker/issues/8795
 // https://github.com/kubernetes/kubernetes/issues/31983
 func ClearUdpConntrackForPort(execer exec.Interface, port int) {
-	glog.V(2).Infof("Deleting conntrack entries for udp connections")
+	glog.V(3).Infof("Deleting conntrack entries for udp connections")
 	if port > 0 {
 		err := ExecConntrackTool(execer, "-D", "-p", "udp", "--dport", strconv.Itoa(port))
 		if err != nil && !strings.Contains(err.Error(), noConnectionToDelete) {
@@ -58,7 +58,7 @@ func DeleteEndpointConnections(execer exec.Interface, serviceMap ProxyServiceMap
 	for epSvcPair := range connectionMap {
 		if svcInfo, ok := serviceMap[epSvcPair.ServicePortName]; ok && svcInfo.Protocol == strings.ToLower(string(api.ProtocolUDP)) {
 			endpointIP := strings.Split(epSvcPair.Endpoint, ":")[0]
-			glog.V(2).Infof("Deleting connection tracking state for service IP %s, endpoint IP %s", svcInfo.ClusterIP.String(), endpointIP)
+			glog.V(3).Infof("Deleting connection tracking state for service IP %s, endpoint IP %s", svcInfo.ClusterIP.String(), endpointIP)
 			err := ExecConntrackTool(execer, "-D", "--orig-dst", svcInfo.ClusterIP.String(), "--dst-nat", endpointIP, "-p", "udp")
 			if err != nil && !strings.Contains(err.Error(), noConnectionToDelete) {
 				// TODO: Better handling for deletion failure. When failure occur, stale udp connection may not get flushed.
@@ -74,7 +74,7 @@ func DeleteEndpointConnections(execer exec.Interface, serviceMap ProxyServiceMap
 // for the UDP connections specified by the given service IPs
 func DeleteServiceConnections(execer exec.Interface, svcIPs []string) {
 	for _, ip := range svcIPs {
-		glog.V(2).Infof("Deleting connection tracking state for service IP %s", ip)
+		glog.V(3).Infof("Deleting connection tracking state for service IP %s", ip)
 		err := ExecConntrackTool(execer, "-D", "--orig-dst", ip, "-p", "udp")
 		if err != nil && !strings.Contains(err.Error(), noConnectionToDelete) {
 			// TODO: Better handling for deletion failure. When failure occur, stale udp connection may not get flushed.

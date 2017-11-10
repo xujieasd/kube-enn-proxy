@@ -28,7 +28,7 @@ type EndpointServicePair struct {
 }
 
 func BuildEndPointsMap(hostname string, curMap ProxyEndpointMap) (ProxyEndpointMap, map[EndpointServicePair]bool){
-	glog.V(2).Infof("BuildEndPointMap")
+	glog.V(3).Infof("BuildEndPointMap")
 	endpointsMap := make(ProxyEndpointMap)
 	staleSet := make(map[EndpointServicePair]bool)
 
@@ -82,7 +82,7 @@ func BuildEndPointsMap(hostname string, curMap ProxyEndpointMap) (ProxyEndpointM
 			}
 			if stale {
 				endpoint := net.JoinHostPort(ep.Ip,strconv.Itoa(ep.Port))
-				glog.V(2).Infof("Stale endpoint %v -> %v", svcPort, endpoint)
+				glog.V(3).Infof("Stale endpoint %v -> %v", svcPort, endpoint)
 				staleSet[EndpointServicePair{Endpoint: endpoint, ServicePortName: svcPort}] = true
 			}
 		}
