@@ -29,6 +29,11 @@ const (
 
 )
 
+var IpvsModules = []string{
+	"ip_vs",
+	"ip_vs_rr",
+	"nf_conntrack_ipv4",
+}
 
 type Service struct{
 	ClusterIP       net.IP

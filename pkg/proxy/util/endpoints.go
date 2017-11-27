@@ -1,12 +1,10 @@
 package util
 
 import (
-
 	"kube-enn-proxy/pkg/proxy"
 	"k8s.io/apimachinery/pkg/types"
 	"kube-enn-proxy/pkg/watchers"
 	api "k8s.io/client-go/pkg/api/v1"
-
 	"github.com/golang/glog"
 
 	"net"
@@ -30,6 +28,7 @@ type EndpointServicePair struct {
 func BuildEndPointsMap(hostname string, curMap ProxyEndpointMap) (ProxyEndpointMap, map[EndpointServicePair]bool){
 	glog.V(3).Infof("BuildEndPointMap")
 	endpointsMap := make(ProxyEndpointMap)
+	//hcEndpoints := make(map[types.NamespacedName]int)
 	staleSet := make(map[EndpointServicePair]bool)
 
 	for _, endpoints := range watchers.EndpointsWatchConfig.List() {
@@ -87,6 +86,25 @@ func BuildEndPointsMap(hostname string, curMap ProxyEndpointMap) (ProxyEndpointM
 			}
 		}
 	}
+
+
+	//localIPs := map[types.NamespacedName]sets.String{}
+	//for svcPort := range endpointsMap {
+	//	for _, ep := range endpointsMap[svcPort] {
+	//		if ep.IsLocal {
+	//			nsn := svcPort.NamespacedName
+	//			if localIPs[nsn] == nil {
+	//				localIPs[nsn] = sets.NewString()
+	//			}
+	//			ip := ep.Ip
+	//			localIPs[nsn].Insert(ip)
+	//		}
+	//	}
+	//}
+	// produce a count per service
+	//for nsn, ips := range localIPs {
+	//	hcEndpoints[nsn] = len(ips)
+	//}
 
 	return endpointsMap, staleSet
 }

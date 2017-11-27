@@ -3,6 +3,7 @@ package util
 import (
 	"net"
 	"strings"
+	"reflect"
 	"kube-enn-proxy/pkg/proxy"
 	"k8s.io/apimachinery/pkg/types"
 	"kube-enn-proxy/pkg/watchers"
@@ -11,15 +12,19 @@ import (
 	"github.com/golang/glog"
 
 	"k8s.io/apimachinery/pkg/util/sets"
+
 )
 
 type ServiceInfo struct {
-	ClusterIP           net.IP
-	Port                int
-	Protocol            string
-	NodePort            int
-	SessionAffinity     bool
-	ExternalIPs         []string
+	ClusterIP                net.IP
+	Port                     int
+	Protocol                 string
+	NodePort                 int
+	SessionAffinity          bool
+	ExternalIPs              []string
+
+	onlyNodeLocalEndpoints   bool
+	healthCheckNodePort      int
 
 }
 
@@ -29,6 +34,7 @@ func BuildServiceMap(oldServiceMap ProxyServiceMap) (ProxyServiceMap, sets.Strin
 
 	glog.V(3).Infof("BuildServiceMap")
 	newServiceMap := make(ProxyServiceMap)
+	//hcPorts := make(map[types.NamespacedName]uint16)
 
 	for _, service := range watchers.ServiceWatchConfig.List(){
 
@@ -58,10 +64,29 @@ func BuildServiceMap(oldServiceMap ProxyServiceMap) (ProxyServiceMap, sets.Strin
 
 			info := newServiceInfo(serviceName, servicePort, service)
 
+			oldInfo, exists := oldServiceMap[serviceName]
+			equal := reflect.DeepEqual(info, oldInfo)
+			if !exists {
+				glog.V(1).Infof("Adding new service %q at %s:%d/%s", serviceName, info.ClusterIP, servicePort.Port, servicePort.Protocol)
+			} else if !equal {
+				glog.V(1).Infof("Updating existing service %q at %s:%d/%s", serviceName, info.ClusterIP, servicePort.Port, servicePort.Protocol)
+			}
+
+			//if info.onlyNodeLocalEndpoints {
+			//	hcPorts[svcName] = uint16(info.healthCheckNodePort)
+			//}
+
 			newServiceMap[serviceName] = info
 		}
 
 	}
+
+	//for nsn, port := range hcPorts {
+	//	if port == 0 {
+	//		glog.Errorf("Service %q has no healthcheck nodeport", nsn)
+	//		delete(hcPorts, nsn)
+	//	}
+	//}
 
 	staleUDPServices := sets.NewString()
 	// Remove serviceports missing from the update.
@@ -80,12 +105,14 @@ func BuildServiceMap(oldServiceMap ProxyServiceMap) (ProxyServiceMap, sets.Strin
 
 func newServiceInfo(serviceName proxy.ServicePortName, port *api.ServicePort, service *api.Service) *ServiceInfo{
 
+	onlyNodeLocalEndpoints := false //currently we do not need this feature
 	info := &ServiceInfo{
 		ClusterIP:                net.ParseIP(service.Spec.ClusterIP),
 		Port:                     int(port.Port),
 		Protocol:                 strings.ToLower(string(port.Protocol)),
 		NodePort:                 int(port.NodePort),
 		ExternalIPs:              make([]string, len(service.Spec.ExternalIPs)),
+		onlyNodeLocalEndpoints:   onlyNodeLocalEndpoints,
 	}
 	copy(info.ExternalIPs, service.Spec.ExternalIPs)
 
