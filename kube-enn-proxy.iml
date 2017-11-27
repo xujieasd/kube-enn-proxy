@@ -1,11 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <module type="GO_MODULE" version="4">
-  <component name="Go">
-    <buildTags>
-      <option name="cgo" value="YES" />
-      <option name="goVersion" value="go1.7" />
-    </buildTags>
-  </component>
   <component name="NewModuleRootManager" inherit-compiler-output="true">
     <exclude-output />
     <content url="file://$MODULE_DIR$" />

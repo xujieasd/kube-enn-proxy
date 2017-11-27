@@ -79,7 +79,7 @@ func revertPorts(replacementPortsMap, originalPortsMap map[LocalPort]Closeable) 
 	for k, v := range replacementPortsMap {
 		// Only close newly opened local ports - leave ones that were open before this update
 		if originalPortsMap[k] == nil {
-			glog.V(2).Infof("Closing local port %s after iptables-restore failure", k.String())
+			glog.V(3).Infof("Closing local port %s after iptables-restore failure", k.String())
 			v.Close()
 		}
 	}

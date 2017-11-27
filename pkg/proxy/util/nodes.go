@@ -63,3 +63,34 @@ func InternalGetNodeHostIP(node *apiv1.Node) (net.IP, error) {
 	}
 	return nil, fmt.Errorf("host IP unknown; known addresses: %v", addresses)
 }
+
+func GetNodeIPs() (ips []net.IP, err error) {
+	interfaces, err := net.Interfaces()
+	if err != nil {
+		return nil, err
+	}
+	for i := range interfaces {
+		name := interfaces[i].Name
+		// We assume node ip bind to eth{x} or enp{x}
+		// todo: need to handle how to make 127.0.0.1:nodeport accsessible
+		if !(strings.HasPrefix(name, "eth")||strings.HasPrefix(name, "enp")) {
+			continue
+		}
+		intf, err := net.InterfaceByName(name)
+		if err != nil {
+			continue
+		}
+		addrs, err := intf.Addrs()
+		if err != nil {
+			continue
+		}
+		for _, a := range addrs {
+			if ipnet, ok := a.(*net.IPNet); ok {
+				if ipnet.IP.To4() != nil {
+					ips = append(ips, ipnet.IP.To4())
+				}
+			}
+		}
+	}
+	return
+}
