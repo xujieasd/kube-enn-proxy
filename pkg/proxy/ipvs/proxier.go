@@ -17,8 +17,8 @@ import (
 	"github.com/golang/glog"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/apimachinery/pkg/types"
-	clientv1 "k8s.io/client-go/pkg/api/v1"
-	"k8s.io/client-go/pkg/api"
+	"k8s.io/apimachinery/pkg/runtime"
+	api "k8s.io/api/core/v1"
 	"k8s.io/client-go/tools/record"
 
 	"kube-enn-proxy/pkg/util/coreos/go-iptables/iptables"
@@ -34,6 +34,7 @@ import (
 
 	"github.com/vishvananda/netlink"
 	"k8s.io/apimachinery/pkg/util/sets"
+	"kube-enn-proxy/pkg/util/async"
 )
 
 //var ipvsInterface utilipvs.Interface
@@ -58,6 +59,7 @@ type Proxier struct {
 	syncPeriod	    time.Duration
 	minSyncPeriod       time.Duration
 
+	syncRunner          *async.BoundedFrequencyRunner // governs calls to syncProxyRules
 
 	masqueradeAll       bool
 	exec                utilexec.Interface
@@ -138,7 +140,8 @@ func NewProxier(
 
 
 	eventBroadcaster := record.NewBroadcaster()
-	recorder := eventBroadcaster.NewRecorder(api.Scheme, clientv1.EventSource{Component: "kube-proxy", Host: hostname})
+	scheme := runtime.NewScheme()
+	recorder := eventBroadcaster.NewRecorder(scheme,api.EventSource{Component: "kube-proxy", Host: hostname})
 
 	healthchecker := healthcheck.NewServer(hostname,recorder,nil,nil)
 
@@ -359,7 +362,7 @@ func (proxier *Proxier) syncProxyRules(){
 						msg := fmt.Sprintf("can't open %s, skipping this externalIP: %v", lp.String(), err)
 
 						proxier.recorder.Eventf(
-							&clientv1.ObjectReference{
+							&api.ObjectReference{
 								Kind:      "Node",
 								Name:      proxier.hostname,
 								UID:       types.UID(proxier.hostname),

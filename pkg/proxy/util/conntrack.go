@@ -23,7 +23,7 @@ import (
 
 	"kube-enn-proxy/pkg/util/exec"
 
-	api "k8s.io/client-go/pkg/api/v1"
+	api "k8s.io/api/core/v1"
 
 	"github.com/golang/glog"
 )
