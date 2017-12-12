@@ -29,6 +29,15 @@ const (
 
 )
 
+const (
+	// DefaultTimeoutSeconds is the default timeout seconds
+	// of Client IP based session affinity - 3 hours.
+	DefaultTimeoutSeconds       = 180 * 60
+	FlagPersistent              = 0x1
+	DefaultMask                 = 0xFFFFFFFF
+
+)
+
 var IpvsModules = []string{
 	"ip_vs",
 	"ip_vs_rr",
@@ -425,11 +434,9 @@ func CreateLibIpvsService(service *Service) (*libipvs.Service, error){
 	}
 
 	if service.SessionAffinity {
-		//svc.Flags |= 0x01
-		svc.Flags |= (1 << 24)
-		svc.Netmask |= 0xFFFFFFFF
-		// todo: need to refer to k8s 1.8
-		svc.Timeout = 180 * 60
+		svc.Flags |= FlagPersistent
+		svc.Netmask |= DefaultMask
+		svc.Timeout = DefaultTimeoutSeconds
 	}
 
 	return svc, nil

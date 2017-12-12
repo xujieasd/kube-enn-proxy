@@ -27,8 +27,7 @@ import (
 	"github.com/renstrom/dedent"
 
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/client-go/pkg/api"
-	clientv1 "k8s.io/client-go/pkg/api/v1"
+	api "k8s.io/api/core/v1"
 	"k8s.io/client-go/tools/record"
 )
 
@@ -153,7 +152,7 @@ func (hcs *server) SyncServices(newServices map[types.NamespacedName]uint16) err
 
 			if hcs.recorder != nil {
 				hcs.recorder.Eventf(
-					&clientv1.ObjectReference{
+					&api.ObjectReference{
 						Kind:      "Service",
 						Namespace: nsn.Namespace,
 						Name:      nsn.Name,

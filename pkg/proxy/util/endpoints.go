@@ -4,7 +4,7 @@ import (
 	"kube-enn-proxy/pkg/proxy"
 	"k8s.io/apimachinery/pkg/types"
 	"kube-enn-proxy/pkg/watchers"
-	api "k8s.io/client-go/pkg/api/v1"
+	api "k8s.io/api/core/v1"
 	"github.com/golang/glog"
 
 	"net"
