@@ -36,7 +36,6 @@ func NewKubeEnnProxyConfig() *KubeEnnProxyConfig {
 		ConfigSyncPeriod:   5 * time.Minute,
 		IpvsSyncPeriod:     5 * time.Minute,
 		IPTablesSyncPeriod: 5 * time.Minute,
-		MinSyncPeriod:      5 * time.Second,
 		MasqueradeAll:      false,
 		IpvsScheduler:      libipvs.RoundRobin,
 	}

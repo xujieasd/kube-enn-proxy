@@ -10,16 +10,16 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	//"syscall"
 	"time"
-
 
 	"github.com/golang/glog"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/util/sets"
 	api "k8s.io/api/core/v1"
 	"k8s.io/client-go/tools/record"
+	"k8s.io/client-go/util/flowcontrol"
 
 	"kube-enn-proxy/pkg/util/coreos/go-iptables/iptables"
 
@@ -31,10 +31,10 @@ import (
 	"kube-enn-proxy/app/options"
 	"kube-enn-proxy/pkg/watchers"
 	"kube-enn-proxy/pkg/proxy/healthcheck"
+	"kube-enn-proxy/pkg/proxy"
 
 	"github.com/vishvananda/netlink"
-	"k8s.io/apimachinery/pkg/util/sets"
-	"kube-enn-proxy/pkg/util/async"
+
 )
 
 //var ipvsInterface utilipvs.Interface
@@ -56,10 +56,15 @@ type Proxier struct {
 	kernelIpvsMap       map[activeServiceKey][]activeServiceValue
 	kernelClusterMap    map[string]int
 
+	throttle            flowcontrol.RateLimiter
+
 	syncPeriod	    time.Duration
 	minSyncPeriod       time.Duration
 
-	syncRunner          *async.BoundedFrequencyRunner // governs calls to syncProxyRules
+	endpointsSynced     bool
+	servicesSynced      bool
+
+	//syncRunner          *async.BoundedFrequencyRunner // governs calls to syncProxyRules
 
 	masqueradeAll       bool
 	exec                utilexec.Interface
@@ -71,7 +76,7 @@ type Proxier struct {
 	client              *kubernetes.Clientset
 
 	ipvsInterface	    utilipvs.Interface
-	//iptablesInterface   utiliptables.Interface
+
 	recorder            record.EventRecorder
 	portMapper          util.PortOpener
 	healthChecker       healthcheck.Server
@@ -145,12 +150,21 @@ func NewProxier(
 
 	healthchecker := healthcheck.NewServer(hostname,recorder,nil,nil)
 
+	var throttle flowcontrol.RateLimiter
+	if minSyncPeriod != 0{
+		qps := float32(time.Second) / float32(minSyncPeriod)
+		burst := 2
+		glog.V(3).Infof("minSyncPeriod: %v, syncPeriod: %v, burstSyncs: %d", minSyncPeriod, syncPeriod, burst)
+		throttle = flowcontrol.NewTokenBucketRateLimiter(qps,burst)
+	}
+
 	IpvsProxier := Proxier{
 		serviceMap:        make(util.ProxyServiceMap),
 		endpointsMap:      make(util.ProxyEndpointMap),
 		portsMap:          make(map[util.LocalPort]util.Closeable),
 		kernelIpvsMap:     make(map[activeServiceKey][]activeServiceValue),
 		kernelClusterMap:  make(map[string]int),
+		throttle:          throttle,
 		masqueradeAll:     masqueradeAll,
 		exec:              execer,
 		clusterCIDR:       clusterCIDR,
@@ -167,6 +181,10 @@ func NewProxier(
 		healthChecker:     healthchecker,
 	}
 
+	//burstSyncs := 2
+	//glog.V(3).Infof("minSyncPeriod: %v, syncPeriod: %v, burstSyncs: %d", minSyncPeriod, syncPeriod, burstSyncs)
+	//IpvsProxier.syncRunner = async.NewBoundedFrequencyRunner("sync-runner", IpvsProxier.syncProxyRules, minSyncPeriod, syncPeriod, burstSyncs)
+
 	return &IpvsProxier, nil
 
 }
@@ -177,6 +195,7 @@ func FakeProxier() *Proxier{
 		ipvsInterface: ipvs,
 	}
 }
+
 
 func (proxier *Proxier) SyncLoop(stopCh <-chan struct{}, wg *sync.WaitGroup){
 
@@ -202,6 +221,7 @@ func (proxier *Proxier) SyncLoop(stopCh <-chan struct{}, wg *sync.WaitGroup){
 			return
 		}
 	}
+
 }
 
 func (proxier *Proxier) Sync(){
@@ -217,14 +237,24 @@ func (proxier *Proxier) Sync(){
 	proxier.endpointsMap, _ = util.BuildEndPointsMap(proxier.hostname, proxier.endpointsMap)
 	proxier.syncProxyRules()
 
+
 }
 
 func (proxier *Proxier) syncProxyRules(){
+
+	if proxier.throttle != nil{
+		proxier.throttle.Accept()
+	}
 
 	start := time.Now()
 	defer func() {
 		glog.V(4).Infof("syncProxyRules took %v", time.Since(start))
 	}()
+
+	if !(watchers.ServiceWatchConfig.HasSynced() && watchers.EndpointsWatchConfig.HasSynced()) {
+		glog.V(3).Infof("Not syncing iptables until Services and Endpoints have been received from master")
+		return
+	}
 
 	activeServiceMap := make(map[activeServiceKey][]activeServiceValue)
 
@@ -282,59 +312,12 @@ func (proxier *Proxier) syncProxyRules(){
 		activeServiceMap[clusterKey] = make([]activeServiceValue,0)
 
 		KernelEndpoints, hasCluster := proxier.kernelIpvsMap[clusterKey]
-		if !hasCluster {
-			glog.V(3).Infof("new cluter find so add cluster to ipvs")
 
-			/* handle ipvs service add */
-			err = proxier.ipvsInterface.AddIpvsService(ipvs_cluster_service)
-			if err != nil{
-				glog.Errorf("syncProxyRules: add ipvs cluster service feild: %s",err)
-				continue
-			}
-
-		}else {
-			glog.V(4).Infof("old cluter ip %s:%d",ipvs_cluster_service.ClusterIP.String(),ipvs_cluster_service.Port)
-		}
-
-		/* handle ipvs destination add */
-		for _, endpointinfo := range proxier.endpointsMap[svcName]{
-			ipvs_server := &utilipvs.Server{
-				Ip:      endpointinfo.Ip,
-				Port:    endpointinfo.Port,
-				Weight:  utilipvs.DEFAULWEIGHT,
-			}
-
-			endpointValue := activeServiceValue{
-				ip:    ipvs_server.Ip,
-				port:  ipvs_server.Port,
-			}
-			activeServiceMap[clusterKey] = append(activeServiceMap[clusterKey],endpointValue)
-
-			isEndpointActive := false
-			if hasCluster{
-				// cluster ip is in ipvs rule, should check whether dst is in rule
-				for _, oldDst := range KernelEndpoints {
-					glog.V(6).Infof("old dst %s:%d", oldDst.ip, oldDst.port)
-					if strings.Compare(endpointinfo.Ip, oldDst.ip) == 0 && endpointinfo.Port == oldDst.port {
-						//endpoint is in ipvs rule
-						isEndpointActive = true
-						glog.V(6).Infof("endpoint is in ipvs rule so skip add endpoint")
-						break
-					}
-				}
-
-			}
-			if isEndpointActive{
-				continue
-			}
-			err = proxier.ipvsInterface.AddIpvsServer(ipvs_cluster_service, ipvs_server)
-			if err != nil{
-				glog.Errorf("syncProxyRules: add ipvs destination feild: %s",err)
-				continue
-			}
-
-
-
+		if err := proxier.CreateServiceRule(hasCluster,ipvs_cluster_service); err == nil{
+			/* handle ipvs destination add */
+			activeServiceMap[clusterKey] = proxier.CreateEndpointRule(hasCluster,ipvs_cluster_service,svcName,KernelEndpoints)
+		}else{
+			glog.Errorf("syncProxyRules: add ipvs cluster service feild: %s",err)
 		}
 
 
@@ -390,67 +373,19 @@ func (proxier *Proxier) syncProxyRules(){
 				port:     ipvs_externalIp_service.Port,
 				protocol: ipvs_externalIp_service.Protocol,
 			}
+
 			activeServiceMap[externalIPKey] = make([]activeServiceValue,0)
 
-
 			KernelEndpoints, hasCluster := proxier.kernelIpvsMap[externalIPKey]
-			if !hasCluster {
-				glog.V(3).Infof("new cluter find so add cluster to ipvs")
 
-				/* handle ipvs service add */
-				err = proxier.ipvsInterface.AddIpvsService(ipvs_externalIp_service)
-				if err != nil{
-					glog.Errorf("syncProxyRules: add ipvs node service feild: %s",err)
-					continue
-				}
-
-			}else {
-				glog.V(4).Infof("old cluter ip %s:%d",ipvs_externalIp_service.ClusterIP.String(),ipvs_externalIp_service.Port)
+			if err := proxier.CreateServiceRule(hasCluster,ipvs_externalIp_service); err == nil{
+				/* handle ipvs destination add */
+				activeServiceMap[externalIPKey] = proxier.CreateEndpointRule(hasCluster,ipvs_externalIp_service,svcName,KernelEndpoints)
+			}else{
+				glog.Errorf("syncProxyRules: add ipvs cluster service feild: %s",err)
 			}
 
-
-			/* handle ipvs destination add */
-			for _, endpointinfo := range proxier.endpointsMap[svcName]{
-				ipvs_server := &utilipvs.Server{
-					Ip:      endpointinfo.Ip,
-					Port:    endpointinfo.Port,
-					Weight:  utilipvs.DEFAULWEIGHT,
-				}
-
-				endpointValue := activeServiceValue{
-					ip:    ipvs_server.Ip,
-					port:  ipvs_server.Port,
-				}
-				activeServiceMap[externalIPKey] = append(activeServiceMap[externalIPKey],endpointValue)
-
-				isEndpointActive := false
-				if hasCluster{
-					// cluster ip is in ipvs rule, should check whether dst is in rule
-					for _, oldDst := range KernelEndpoints {
-						glog.V(6).Infof("old dst %s:%d", oldDst.ip, oldDst.port)
-						if strings.Compare(endpointinfo.Ip, oldDst.ip) == 0 && endpointinfo.Port == oldDst.port {
-							//endpoint is in ipvs rule
-							isEndpointActive = true
-							glog.V(6).Infof("endpoint is in ipvs rule so skip add endpoint")
-							break
-						}
-					}
-
-				}
-				if isEndpointActive{
-					continue
-				}
-
-				err = proxier.ipvsInterface.AddIpvsServer(ipvs_externalIp_service, ipvs_server)
-				if err != nil {
-					glog.Errorf("syncProxyRules: add ipvs destination feild: %s", err)
-					continue
-
-				}
-
-			}
 		}
-
 
 
 		/* capture node port */
@@ -501,63 +436,13 @@ func (proxier *Proxier) syncProxyRules(){
 					activeServiceMap[nodeKey] = make([]activeServiceValue,0)
 
 					KernelEndpoints, hasCluster := proxier.kernelIpvsMap[nodeKey]
-					if !hasCluster {
-						glog.V(3).Infof("new cluter find so add cluster to ipvs")
 
-						/* handle ipvs service add */
-						err = proxier.ipvsInterface.AddIpvsService(ipvs_node_service)
-						if err != nil{
-							glog.Errorf("syncProxyRules: add ipvs node service feild: %s",err)
-							continue
-						}
-
-					}else {
-						glog.V(4).Infof("old cluter ip %s:%d",ipvs_node_service.ClusterIP.String(),ipvs_node_service.Port)
+					if err := proxier.CreateServiceRule(hasCluster,ipvs_node_service); err == nil{
+						/* handle ipvs destination add */
+						activeServiceMap[nodeKey] = proxier.CreateEndpointRule(hasCluster,ipvs_node_service,svcName,KernelEndpoints)
+					}else{
+						glog.Errorf("syncProxyRules: add ipvs cluster service feild: %s",err)
 					}
-
-
-					/* handle ipvs destination add */
-					for _, endpointinfo := range proxier.endpointsMap[svcName]{
-						ipvs_server := &utilipvs.Server{
-							Ip:      endpointinfo.Ip,
-							Port:    endpointinfo.Port,
-							Weight:  utilipvs.DEFAULWEIGHT,
-						}
-
-						endpointValue := activeServiceValue{
-							ip:    ipvs_server.Ip,
-							port:  ipvs_server.Port,
-						}
-						activeServiceMap[nodeKey] = append(activeServiceMap[nodeKey],endpointValue)
-
-						isEndpointActive := false
-						if hasCluster{
-							// cluster ip is in ipvs rule, should check whether dst is in rule
-							for _, oldDst := range KernelEndpoints {
-								glog.V(6).Infof("old dst %s:%d", oldDst.ip, oldDst.port)
-								if strings.Compare(endpointinfo.Ip, oldDst.ip) == 0 && endpointinfo.Port == oldDst.port {
-									//endpoint is in ipvs rule
-									isEndpointActive = true
-									glog.V(6).Infof("endpoint is in ipvs rule so skip add endpoint")
-									break
-								}
-							}
-
-						}
-						if isEndpointActive{
-							continue
-						}
-
-						err = proxier.ipvsInterface.AddIpvsServer(ipvs_node_service, ipvs_server)
-						if err != nil{
-							glog.Errorf("syncProxyRules: add ipvs destination feild: %s",err)
-							continue
-
-						}
-
-					}
-
-
 				}
 			}
 
@@ -568,11 +453,92 @@ func (proxier *Proxier) syncProxyRules(){
 	}
 	glog.V(4).Infof("create ipvs rule took %v", time.Since(start))
 
-	/* compare active ipvs info with old ipvs info
-	   if there is any rule remain in the old ipvs info
-	   but doesn't exist in the active ipvs info
-	   then remove the rule
-		*/
+	proxier.CheckUnusedRule(activeServiceMap)
+
+	glog.V(4).Infof("check ipvs rule took %v", time.Since(start))
+
+	// Close old local ports and save new ones.
+	for k, v := range proxier.portsMap {
+		if replacementPortsMap[k] == nil {
+			v.Close()
+		}
+	}
+	proxier.portsMap = replacementPortsMap
+
+}
+
+func (proxier *Proxier) CreateServiceRule(hasCluster bool, ipvs_cluster_service *utilipvs.Service) error{
+	if !hasCluster {
+		glog.V(3).Infof("new cluter find so add cluster to ipvs")
+
+		/* handle ipvs service add */
+		err := proxier.ipvsInterface.AddIpvsService(ipvs_cluster_service)
+		if err != nil{
+			return err
+		}
+
+	}else {
+		glog.V(4).Infof("old cluter ip %s:%d",ipvs_cluster_service.ClusterIP.String(),ipvs_cluster_service.Port)
+	}
+	return nil
+}
+
+func (proxier *Proxier) CreateEndpointRule(
+    hasCluster bool,
+    ipvs_cluster_service *utilipvs.Service,
+    svcName proxy.ServicePortName,
+    KernelEndpoints []activeServiceValue,
+)([]activeServiceValue){
+	/* handle ipvs destination add */
+	var activeEndpoints []activeServiceValue
+	for _, endpointinfo := range proxier.endpointsMap[svcName]{
+		ipvs_server := &utilipvs.Server{
+			Ip:      endpointinfo.Ip,
+			Port:    endpointinfo.Port,
+			Weight:  utilipvs.DEFAULWEIGHT,
+		}
+
+		endpointValue := activeServiceValue{
+			ip:    ipvs_server.Ip,
+			port:  ipvs_server.Port,
+		}
+		activeEndpoints = append(activeEndpoints,endpointValue)
+
+		isEndpointActive := false
+		if hasCluster{
+			// cluster ip is in ipvs rule, should check whether dst is in rule
+			for _, oldDst := range KernelEndpoints {
+				glog.V(6).Infof("old dst %s:%d", oldDst.ip, oldDst.port)
+				if strings.Compare(endpointinfo.Ip, oldDst.ip) == 0 && endpointinfo.Port == oldDst.port {
+					//endpoint is in ipvs rule
+					isEndpointActive = true
+					glog.V(6).Infof("endpoint is in ipvs rule so skip add endpoint")
+					break
+				}
+			}
+
+		}
+		if isEndpointActive{
+			continue
+		}
+		err := proxier.ipvsInterface.AddIpvsServer(ipvs_cluster_service, ipvs_server)
+		if err != nil{
+			glog.Errorf("syncProxyRules: add ipvs destination feild: %s",err)
+			continue
+		}
+
+	}
+
+	return activeEndpoints
+}
+
+/*  checkUnusedRule:
+    compare active ipvs info with old ipvs info
+    if there is any rule remain in the old ipvs info
+    but doesn't exist in the active ipvs info
+    then remove the rule
+*/
+func (proxier *Proxier) CheckUnusedRule (activeServiceMap map[activeServiceKey][]activeServiceValue){
 	oldSvcs, err := proxier.ipvsInterface.ListIpvsService()
 	if err != nil{
 		panic(err)
@@ -599,15 +565,15 @@ func (proxier *Proxier) syncProxyRules(){
 				continue
 			}
 
-//			if strings.Compare(oldSvc_t.ClusterIP.String(),proxier.nodeIP.String()) != 0{
-//
-//				err = proxier.ipvsInterface.DeleteDummyClusterIp(oldSvc_t,dummylink)
-//
-//				if err != nil{
-//					glog.Errorf("clean unused dummy cluster ip failed: %s",err)
-//					continue
-//				}
-//			}
+			//			if strings.Compare(oldSvc_t.ClusterIP.String(),proxier.nodeIP.String()) != 0{
+			//
+			//				err = proxier.ipvsInterface.DeleteDummyClusterIp(oldSvc_t,dummylink)
+			//
+			//				if err != nil{
+			//					glog.Errorf("clean unused dummy cluster ip failed: %s",err)
+			//					continue
+			//				}
+			//			}
 
 		} else {
 			/* check unused dst info so remove ipvs dst config */
@@ -640,17 +606,9 @@ func (proxier *Proxier) syncProxyRules(){
 
 		}
 	}
-	glog.V(4).Infof("check ipvs rule took %v", time.Since(start))
-
-	// Close old local ports and save new ones.
-	for k, v := range proxier.portsMap {
-		if replacementPortsMap[k] == nil {
-			v.Close()
-		}
-	}
-	proxier.portsMap = replacementPortsMap
 
 }
+
 
 func (proxier *Proxier) BuildIpvsMap() {
 
