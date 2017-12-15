@@ -57,7 +57,7 @@ func BuildEndPointsMap(hostname string, curMap ProxyEndpointMap) (ProxyEndpointM
 						glog.Warningf("ignoring invalid endpoint port %s with empty host", ports.Name)
 						continue
 					}
-					info := newEndpointsInfo(addr,ports,hostname)
+					info := NewEndpointsInfo(addr,ports,hostname)
 
 					new_endpoints = append(new_endpoints, info)
 				}
@@ -109,7 +109,7 @@ func BuildEndPointsMap(hostname string, curMap ProxyEndpointMap) (ProxyEndpointM
 	return endpointsMap, staleSet
 }
 
-func newEndpointsInfo(address api.EndpointAddress, port api.EndpointPort, hostname string) *EndpointsInfo {
+func NewEndpointsInfo(address api.EndpointAddress, port api.EndpointPort, hostname string) *EndpointsInfo {
 
 	info := &EndpointsInfo{
 		Ip:         address.IP,

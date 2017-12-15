@@ -21,7 +21,7 @@ import (
 	"strings"
 	"strconv"
 
-	"kube-enn-proxy/pkg/util/exec"
+	"k8s.io/utils/exec"
 
 	api "k8s.io/api/core/v1"
 

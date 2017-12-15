@@ -25,7 +25,7 @@ import (
 
 	utilipvs "kube-enn-proxy/pkg/util/ipvs"
 	//utiliptables "kube-enn-proxy/pkg/util/iptables"
-	utilexec "kube-enn-proxy/pkg/util/exec"
+	utilexec "k8s.io/utils/exec"
 	//utildbus "kube-enn-proxy/pkg/util/dbus"
 	"kube-enn-proxy/pkg/proxy/util"
 	"kube-enn-proxy/app/options"
@@ -71,6 +71,7 @@ type Proxier struct {
 	clusterCIDR         string
 	hostname            string
 	nodeIP              net.IP
+	nodeIPs             []net.IP
 	scheduler           string
 
 	client              *kubernetes.Clientset
@@ -82,7 +83,6 @@ type Proxier struct {
 	healthChecker       healthcheck.Server
 
 }
-
 
 type activeServiceKey struct {
 	ip       string
@@ -138,6 +138,11 @@ func NewProxier(
 	if err != nil{
 		return nil, fmt.Errorf("NewProxier failure: GetNodeIP fall: %s", err.Error())
 	}
+	nodeIPs, err := util.GetNodeIPs()
+	if err != nil {
+		glog.Errorf("Failed to get node IP, err: %v", err)
+	}
+
 	var scheduler = utilipvs.DEFAULSCHE
 	if len(config.IpvsScheduler) != 0{
 		scheduler = config.IpvsScheduler
@@ -170,6 +175,7 @@ func NewProxier(
 		clusterCIDR:       clusterCIDR,
 		hostname:          hostname,
 		nodeIP:            nodeIP,
+		nodeIPs:           nodeIPs,
 		scheduler:         scheduler,
 		syncPeriod:        syncPeriod,
 		minSyncPeriod:     minSyncPeriod,
@@ -251,10 +257,10 @@ func (proxier *Proxier) syncProxyRules(){
 		glog.V(4).Infof("syncProxyRules took %v", time.Since(start))
 	}()
 
-	if !(watchers.ServiceWatchConfig.HasSynced() && watchers.EndpointsWatchConfig.HasSynced()) {
-		glog.V(3).Infof("Not syncing iptables until Services and Endpoints have been received from master")
-		return
-	}
+//	if !(watchers.ServiceWatchConfig.HasSynced() && watchers.EndpointsWatchConfig.HasSynced()) {
+//		glog.V(3).Infof("Not syncing iptables until Services and Endpoints have been received from master")
+//		return
+//	}
 
 	activeServiceMap := make(map[activeServiceKey][]activeServiceValue)
 
@@ -415,11 +421,10 @@ func (proxier *Proxier) syncProxyRules(){
 				replacementPortsMap[lp] = socket
 			} // We're holding the port, so it's OK to install ipvs rules.
 
-			nodeIPs, err := util.GetNodeIPs()
-			if err != nil {
-				glog.Errorf("Failed to get node IP, err: %v", err)
+			if proxier.nodeIPs == nil {
+				glog.Errorf("Failed to get node IP")
 			}else{
-				for _, nodeIP := range nodeIPs {
+				for _, nodeIP := range proxier.nodeIPs {
 					ipvs_node_service := &utilipvs.Service{
 						ClusterIP:        nodeIP,
 						Port:             serviceInfo.NodePort,

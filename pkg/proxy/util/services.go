@@ -23,7 +23,7 @@ type ServiceInfo struct {
 	SessionAffinity          bool
 	ExternalIPs              []string
 
-	onlyNodeLocalEndpoints   bool
+	OnlyNodeLocalEndpoints   bool
 	healthCheckNodePort      int
 
 }
@@ -62,7 +62,7 @@ func BuildServiceMap(oldServiceMap ProxyServiceMap) (ProxyServiceMap, sets.Strin
 				Port:           servicePort.Name,
 			}
 
-			info := newServiceInfo(serviceName, servicePort, service)
+			info := NewServiceInfo(serviceName, servicePort, service)
 
 			oldInfo, exists := oldServiceMap[serviceName]
 			equal := reflect.DeepEqual(info, oldInfo)
@@ -103,7 +103,7 @@ func BuildServiceMap(oldServiceMap ProxyServiceMap) (ProxyServiceMap, sets.Strin
 
 }
 
-func newServiceInfo(serviceName proxy.ServicePortName, port *api.ServicePort, service *api.Service) *ServiceInfo{
+func NewServiceInfo(serviceName proxy.ServicePortName, port *api.ServicePort, service *api.Service) *ServiceInfo{
 
 	onlyNodeLocalEndpoints := false //currently we do not need this feature
 	info := &ServiceInfo{
@@ -112,7 +112,7 @@ func newServiceInfo(serviceName proxy.ServicePortName, port *api.ServicePort, se
 		Protocol:                 strings.ToLower(string(port.Protocol)),
 		NodePort:                 int(port.NodePort),
 		ExternalIPs:              make([]string, len(service.Spec.ExternalIPs)),
-		onlyNodeLocalEndpoints:   onlyNodeLocalEndpoints,
+		OnlyNodeLocalEndpoints:   onlyNodeLocalEndpoints,
 	}
 	copy(info.ExternalIPs, service.Spec.ExternalIPs)
 

@@ -18,7 +18,7 @@ import (
 
 	utilipvs "kube-enn-proxy/pkg/util/ipvs"
 	//utiliptables "kube-enn-proxy/pkg/util/iptables"
-	utilexec "kube-enn-proxy/pkg/util/exec"
+	utilexec "k8s.io/utils/exec"
 	//utildbus "kube-enn-proxy/pkg/util/dbus"
 )
 
