@@ -263,6 +263,7 @@ func (proxier *Proxier) syncProxyRules(){
 //	}
 
 	activeServiceMap := make(map[activeServiceKey][]activeServiceValue)
+	activeBindIP := make(map[string]int)
 
 	/* create duumy link */
 	dummylink, err := proxier.ipvsInterface.GetDummyLink()
@@ -306,7 +307,7 @@ func (proxier *Proxier) syncProxyRules(){
 		}else {
 			glog.V(4).Infof("old cluter ip which already binded: %s",ipvs_cluster_service.ClusterIP.String())
 		}
-
+		activeBindIP[ipvs_cluster_service.ClusterIP.String()] = 1
 
 
 		clusterKey := activeServiceKey{
@@ -458,7 +459,7 @@ func (proxier *Proxier) syncProxyRules(){
 	}
 	glog.V(4).Infof("create ipvs rule took %v", time.Since(start))
 
-	proxier.CheckUnusedRule(activeServiceMap)
+	proxier.CheckUnusedRule(activeServiceMap, activeBindIP, dummylink)
 
 	glog.V(4).Infof("check ipvs rule took %v", time.Since(start))
 
@@ -543,7 +544,7 @@ func (proxier *Proxier) CreateEndpointRule(
     but doesn't exist in the active ipvs info
     then remove the rule
 */
-func (proxier *Proxier) CheckUnusedRule (activeServiceMap map[activeServiceKey][]activeServiceValue){
+func (proxier *Proxier) CheckUnusedRule (activeServiceMap map[activeServiceKey][]activeServiceValue, activeBindIP map[string]int, dummylink netlink.Link){
 	oldSvcs, err := proxier.ipvsInterface.ListIpvsService()
 	if err != nil{
 		panic(err)
@@ -570,15 +571,17 @@ func (proxier *Proxier) CheckUnusedRule (activeServiceMap map[activeServiceKey][
 				continue
 			}
 
-			//			if strings.Compare(oldSvc_t.ClusterIP.String(),proxier.nodeIP.String()) != 0{
-			//
-			//				err = proxier.ipvsInterface.DeleteDummyClusterIp(oldSvc_t,dummylink)
-			//
-			//				if err != nil{
-			//					glog.Errorf("clean unused dummy cluster ip failed: %s",err)
-			//					continue
-			//				}
-			//			}
+			// check whether cluster ip is still binded, because there maybe other service use the same ip but different port
+			_, bind := activeBindIP[serviceKey.ip]
+			if !bind{
+				glog.V(3).Infof("unbinded unused ipvs dummy cluster ip: %s",serviceKey.ip)
+
+				err = proxier.ipvsInterface.DeleteDummyClusterIp(oldSvc_t, dummylink)
+				if err != nil{
+					glog.Errorf("clean unused dummy cluster ip failed: %s",err)
+					continue
+				}
+			}
 
 		} else {
 			/* check unused dst info so remove ipvs dst config */
