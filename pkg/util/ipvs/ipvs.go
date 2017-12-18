@@ -16,7 +16,6 @@ import (
 	"github.com/golang/glog"
 	"github.com/vishvananda/netlink"
 	libipvs "github.com/docker/libnetwork/ipvs"
-
 )
 
 const (
@@ -74,8 +73,8 @@ type Interface interface {
 	AddDummyLink() error
 	SetDummyLinkUp(link netlink.Link) error
 	DeleteDummyLink() error
-	AddDummyClusterIp(service *Service, link netlink.Link) error
-	DeleteDummyClusterIp(service *Service, link netlink.Link) error
+	AddDummyClusterIp(clusterIP net.IP, link netlink.Link) error
+	DeleteDummyClusterIp(clusterIP net.IP, link netlink.Link) error
 	ListDuumyClusterIp(link netlink.Link) ([]netlink.Addr, error)
 }
 
@@ -376,33 +375,33 @@ func (ei *EnnIpvs) DeleteDummyLink() error{
 	return nil
 }
 
-func (ei *EnnIpvs) AddDummyClusterIp(service *Service, link netlink.Link) error{
+func (ei *EnnIpvs) AddDummyClusterIp(clusterIP net.IP, link netlink.Link) error{
 	vip := &netlink.Addr{
 		IPNet: &net.IPNet{
-			service.ClusterIP,
+			clusterIP,
 			net.IPv4Mask(255, 255, 255, 255),
 		},
 		Scope: syscall.RT_SCOPE_LINK,
 	}
 	err := netlink.AddrAdd(link, vip)
 	if err != nil && err.Error() != IFACE_HAS_ADDR {
-		glog.Errorf("AddDummyClusterIp: add cluster ip %s failed %s", service.ClusterIP.String(), err)
+		glog.Errorf("AddDummyClusterIp: add cluster ip %s failed %s", clusterIP.String(), err)
 		return err
 	}
 	return nil
 }
 
-func (ei *EnnIpvs) DeleteDummyClusterIp(service *Service, link netlink.Link) error{
+func (ei *EnnIpvs) DeleteDummyClusterIp(clusterIP net.IP, link netlink.Link) error{
 	vip := &netlink.Addr{
 		IPNet: &net.IPNet{
-			service.ClusterIP,
+			clusterIP,
 			net.IPv4Mask(255, 255, 255, 255),
 		},
 		Scope: syscall.RT_SCOPE_LINK,
 	}
 	err := netlink.AddrDel(link, vip)
 	if err != nil {
-		glog.Errorf("DeleteDummyClusterIp: delete cluster ip %s failed %s", service.ClusterIP.String(), err)
+		glog.Errorf("DeleteDummyClusterIp: delete cluster ip %s failed %s", clusterIP.String(), err)
 		return err
 	}
 	return nil

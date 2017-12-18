@@ -193,15 +193,15 @@ func (f *Faker) DeleteDummyLink() error{
 	return nil
 }
 
-func (f *Faker) AddDummyClusterIp(service *utilipvs.Service, link netlink.Link) error{
+func (f *Faker) AddDummyClusterIp(clusterIP net.IP, link netlink.Link) error{
 
-	f.DummyMap[service.ClusterIP.String()] = 1
+	f.DummyMap[clusterIP.String()] = 1
 	return nil
 }
 
-func (f *Faker) DeleteDummyClusterIp(service *utilipvs.Service, link netlink.Link) error{
+func (f *Faker) DeleteDummyClusterIp(clusterIP net.IP, link netlink.Link) error{
 
-	delete(f.DummyMap,service.ClusterIP.String())
+	delete(f.DummyMap,clusterIP.String())
 	return nil
 }
 

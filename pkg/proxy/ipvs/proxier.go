@@ -298,7 +298,7 @@ func (proxier *Proxier) syncProxyRules(){
 		_, ok := proxier.kernelClusterMap[ipvs_cluster_service.ClusterIP.String()]
 		if !ok{
 			glog.V(3).Infof("new cluter need to bind so add ip to dummy link: %s",ipvs_cluster_service.ClusterIP.String())
-			err = proxier.ipvsInterface.AddDummyClusterIp(ipvs_cluster_service,dummylink)
+			err = proxier.ipvsInterface.AddDummyClusterIp(ipvs_cluster_service.ClusterIP,dummylink)
 			if err != nil{
 				glog.Errorf("syncProxyRules: add dummy cluster ip feild: %s",err)
 				continue
@@ -545,9 +545,11 @@ func (proxier *Proxier) CreateEndpointRule(
     then remove the rule
 */
 func (proxier *Proxier) CheckUnusedRule (activeServiceMap map[activeServiceKey][]activeServiceValue, activeBindIP map[string]int, dummylink netlink.Link){
+	// check unused ipvs rules
 	oldSvcs, err := proxier.ipvsInterface.ListIpvsService()
 	if err != nil{
-		panic(err)
+		glog.Errorf("CheckUnusedRule: failed to list ipvs service: %v", err)
+		return
 	}
 	for _, oldSvc := range oldSvcs{
 
@@ -571,24 +573,13 @@ func (proxier *Proxier) CheckUnusedRule (activeServiceMap map[activeServiceKey][
 				continue
 			}
 
-			// check whether cluster ip is still binded, because there maybe other service use the same ip but different port
-			_, bind := activeBindIP[serviceKey.ip]
-			if !bind{
-				glog.V(3).Infof("unbinded unused ipvs dummy cluster ip: %s",serviceKey.ip)
-
-				err = proxier.ipvsInterface.DeleteDummyClusterIp(oldSvc_t, dummylink)
-				if err != nil{
-					glog.Errorf("clean unused dummy cluster ip failed: %s",err)
-					continue
-				}
-			}
-
 		} else {
 			/* check unused dst info so remove ipvs dst config */
 			glog.V(4).Infof("check unused dst info so remove ipvs dst config")
 			oldDsts, err := proxier.ipvsInterface.ListIpvsServer(oldSvc)
 			if err != nil{
-				panic(err)
+				glog.Errorf("failed to list ipvs destination: %v", err)
+				continue
 			}
 			for _, oldDst := range oldDsts{
 				glog.V(4).Infof("old dst %s:%d", oldDst.Ip,oldDst.Port)
@@ -615,6 +606,25 @@ func (proxier *Proxier) CheckUnusedRule (activeServiceMap map[activeServiceKey][
 		}
 	}
 
+	// check unused binded cluster ip
+	oldBindIPs, _ := proxier.ipvsInterface.ListDuumyClusterIp(dummylink)
+	if err != nil{
+		glog.Errorf("CheckUnusedRule: failed to list binded ip: %v", err)
+		return
+	}
+
+	for _, oldBindIP := range oldBindIPs{
+		_, bind := activeBindIP[oldBindIP.IP.String()]
+		if !bind{
+			glog.V(3).Infof("unbinded unused ipvs dummy cluster ip: %s",oldBindIP.IP.String())
+
+			err = proxier.ipvsInterface.DeleteDummyClusterIp(oldBindIP.IP, dummylink)
+			if err != nil{
+				glog.Errorf("clean unused dummy cluster ip failed: %s",err)
+				continue
+			}
+		}
+	}
 }
 
 
@@ -624,7 +634,9 @@ func (proxier *Proxier) BuildIpvsMap() {
 
 	ipvsSvcs, err := proxier.ipvsInterface.ListIpvsService()
 	if err != nil{
-		panic(err)
+		glog.Errorf("BuildIpvsMap: failed to list ipvs service: %v", err)
+		proxier.kernelIpvsMap = ipvsMap
+		return
 	}
 
 	for _, ipvsSvc := range ipvsSvcs{
@@ -664,7 +676,11 @@ func (proxier *Proxier) BuildIpvsMap() {
 func (proxier *Proxier) BuildClusterMap(dummylink netlink.Link) {
 
 	clusterMap := make(map[string]int)
-	addrs, _ := proxier.ipvsInterface.ListDuumyClusterIp(dummylink)
+	addrs, err := proxier.ipvsInterface.ListDuumyClusterIp(dummylink)
+	if err != nil{
+		glog.Errorf("failed to list binded ip: %v", err)
+		return
+	}
 
 	for _, addr := range addrs{
 		ipKey := addr.IP.String()
