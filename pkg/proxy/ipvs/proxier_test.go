@@ -411,6 +411,66 @@ func TestExternalIP (t *testing.T){
 	}
 }
 
+func TestClusterIPBindUnBind(t *testing.T){
+	fp := NewFakeProxier()
+
+	services := []*api.Service{
+		makeTestService("ns1", "svc1", func(svc *api.Service) {
+			svc.Spec.Type = api.ServiceTypeClusterIP
+			svc.Spec.ClusterIP = "172.16.55.4"
+			svc.Spec.Ports = addTestPort(svc.Spec.Ports, "test00", "TCP", 1234, 0, 0)
+		}),
+		makeTestService("ns2", "svc2", func(svc *api.Service) {
+			svc.Spec.Type = api.ServiceTypeClusterIP
+			svc.Spec.ClusterIP = "172.16.55.4"
+			svc.Spec.Ports = addTestPort(svc.Spec.Ports, "test10", "TCP", 345, 0, 0)
+			svc.Spec.Ports = addTestPort(svc.Spec.Ports, "test11", "TCP", 346, 0, 0)
+		}),
+		makeTestService("ns3", "svc3", func(svc *api.Service) {
+			svc.Spec.Type = api.ServiceTypeClusterIP
+			svc.Spec.ClusterIP = "172.16.55.4"
+			svc.Spec.Ports = addTestPort(svc.Spec.Ports, "test20", "TCP", 347, 0, 0)
+			svc.Spec.Ports = addTestPort(svc.Spec.Ports, "test21", "TCP", 348, 0, 0)
+			svc.Spec.Ports = addTestPort(svc.Spec.Ports, "test22", "TCP", 349, 0, 0)
+		}),
+		makeTestService("ns4", "svc4", func(svc *api.Service) {
+			svc.Spec.Type = api.ServiceTypeClusterIP
+			svc.Spec.ClusterIP = "172.16.55.7"
+			svc.Spec.Ports = addTestPort(svc.Spec.Ports, "test30", "TCP", 2234, 0, 0)
+		}),
+		makeTestService("ns5", "svc5", func(svc *api.Service) {
+			svc.Spec.Type = api.ServiceTypeClusterIP
+			svc.Spec.ClusterIP = "172.16.55.7"
+			svc.Spec.Ports = addTestPort(svc.Spec.Ports, "test40", "TCP", 3234, 0, 0)
+		}),
+		makeTestService("ns6", "svc6", func(svc *api.Service) {
+			svc.Spec.Type = api.ServiceTypeClusterIP
+			svc.Spec.ClusterIP = "172.16.55.8"
+			svc.Spec.Ports = addTestPort(svc.Spec.Ports, "test50", "TCP", 3234, 0, 0)
+		}),
+	}
+
+	clusterIPBindUnBindTest(t, fp, 1, services[0])
+	clusterIPBindUnBindTest(t, fp, 1, services[0], services[1])
+	clusterIPBindUnBindTest(t, fp, 1, services[0], services[1], services[2])
+	clusterIPBindUnBindTest(t, fp, 2, services[0], services[1], services[2], services[3])
+	clusterIPBindUnBindTest(t, fp, 2, services[0], services[2], services[3])
+	clusterIPBindUnBindTest(t, fp, 2, services[0], services[1], services[2], services[3], services[4])
+	clusterIPBindUnBindTest(t, fp, 3, services[0], services[1], services[2], services[3], services[4], services[5])
+
+	clusterIPHasBind(t, fp, "172.16.55.4")
+	clusterIPHasBind(t, fp, "172.16.55.8")
+	clusterIPHasBind(t, fp, "172.16.55.7")
+
+	clusterIPBindUnBindTest(t, fp, 3, services[1], services[2], services[3], services[4], services[5])
+	clusterIPBindUnBindTest(t, fp, 3, services[2], services[3], services[5])
+	clusterIPBindUnBindTest(t, fp, 2, services[0], services[1], services[2], services[5])
+
+	clusterIPHasBind(t, fp, "172.16.55.4")
+	clusterIPHasBind(t, fp, "172.16.55.8")
+	clusterIPHasNotBind(t, fp, "172.16.55.7")
+}
+
 func TestServiceAddRemove(t *testing.T){
 
 	fp := NewFakeProxier()
@@ -630,6 +690,42 @@ func TestEndpointAddRemove (t *testing.T){
 	endpointHasNotRule(t, fp, svcIP, svcPort, eps[7].ip, eps[7].port)
 }
 
+func clusterIPBindUnBindTest(t *testing.T, fp *Proxier, expected int, allServices ...*api.Service){
+	fp.serviceMap = make(util.ProxyServiceMap)
+	makeServiceMap(fp,allServices...)
+	fp.syncProxyRules()
+	bindNumber, err := fp.checkBindNumber()
+	if err != nil{
+		t.Errorf("checkBindNumer failer: %v", err)
+	}else if bindNumber != expected{
+		t.Errorf("svcNumber: %d, expected: %d", bindNumber, expected)
+	}
+}
+
+func clusterIPHasBind(t *testing.T, fp *Proxier, ip string){
+	check, err := fp.hasBindIP(ip)
+	if err != nil{
+		t.Errorf("failed find bind svc %v", err)
+		return
+	}
+	if !check{
+		t.Errorf("failed find bind svc %v", err)
+		return
+	}
+}
+
+func clusterIPHasNotBind(t *testing.T, fp *Proxier, ip string){
+	check, err := fp.hasNotBindIP(ip)
+	if err != nil{
+		t.Errorf("failed find bind svc %v", err)
+		return
+	}
+	if !check{
+		t.Errorf("failed find bind svc %v", err)
+		return
+	}
+}
+
 func serviceAddRemoveTest(t *testing.T, fp *Proxier, expected int, allServices ...*api.Service){
 	fp.serviceMap = make(util.ProxyServiceMap)
 	makeServiceMap(fp,allServices...)
@@ -725,6 +821,13 @@ func addTestPort(array []api.ServicePort, name string, protocol api.Protocol, po
 	return append(array, svcPort)
 }
 
+func (fp *Proxier) checkBindNumber() (int, error){
+	bindIPs, err := fp.ipvsInterface.ListDuumyClusterIp(nil)
+	if err != nil{
+		return 0, err
+	}
+	return len(bindIPs), nil
+}
 
 func (fp *Proxier) hasBindIP(svcIP string) (bool, error){
 	addrs, err := fp.ipvsInterface.ListDuumyClusterIp(nil)
@@ -739,7 +842,20 @@ func (fp *Proxier) hasBindIP(svcIP string) (bool, error){
 	return false, fmt.Errorf("cannot find bind service %s", svcIP)
 }
 
-func (fp *Proxier) checkSvcNumber () (int, error){
+func (fp *Proxier) hasNotBindIP(svcIP string) (bool, error){
+	addrs, err := fp.ipvsInterface.ListDuumyClusterIp(nil)
+	if err != nil{
+		return false, err
+	}
+	for _, addr := range addrs{
+		if strings.Compare(addr.IP.String(),svcIP) == 0 {
+			return false, fmt.Errorf("find unexpect bind ip %s", svcIP)
+		}
+	}
+	return true, nil
+}
+
+func (fp *Proxier) checkSvcNumber() (int, error){
 	ipvsServices, err := fp.ipvsInterface.ListIpvsService()
 	if err != nil{
 		return 0, err
