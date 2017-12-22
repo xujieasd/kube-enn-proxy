@@ -28,7 +28,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/sets"
 	utildbus "kube-enn-proxy/pkg/util/dbus"
 	utilversion "kube-enn-proxy/pkg/util/version"
-	utilexec "kube-enn-proxy/pkg/util/exec"
+	utilexec "k8s.io/utils/exec"
 )
 
 type RulePosition string
