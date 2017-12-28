@@ -16,6 +16,8 @@ import (
 	"github.com/golang/glog"
 	"github.com/vishvananda/netlink"
 	libipvs "github.com/docker/libnetwork/ipvs"
+	"golang.org/x/sys/unix"
+	"k8s.io/apimachinery/pkg/util/sets"
 )
 
 const (
@@ -76,6 +78,7 @@ type Interface interface {
 	AddDummyClusterIp(clusterIP net.IP, link netlink.Link) error
 	DeleteDummyClusterIp(clusterIP net.IP, link netlink.Link) error
 	ListDuumyClusterIp(link netlink.Link) ([]netlink.Addr, error)
+	GetLocalAddresses(Dev string) (sets.String, error)
 }
 
 func NewEnnIpvs() Interface{
@@ -417,6 +420,45 @@ func (ei *EnnIpvs) ListDuumyClusterIp(link netlink.Link) ([]netlink.Addr, error)
 	return addrs, nil
 }
 
+
+func (ei *EnnIpvs) GetLocalAddresses(Dev string) (sets.String, error) {
+
+
+	linkIndex := -1
+	if len(Dev) != 0 {
+		link, err := netlink.LinkByName(Dev)
+		if err != nil {
+			return nil, fmt.Errorf("error get filter device %s, err: %v", Dev, err)
+		}
+		linkIndex = link.Attrs().Index
+	}
+
+	routeFilter := &netlink.Route{
+		Table:    unix.RT_TABLE_LOCAL,
+		Type:     unix.RTN_LOCAL,
+		Protocol: unix.RTPROT_KERNEL,
+	}
+	filterMask := netlink.RT_FILTER_TABLE | netlink.RT_FILTER_TYPE | netlink.RT_FILTER_PROTOCOL
+
+	// find filter device
+	if linkIndex != -1 {
+		routeFilter.LinkIndex = linkIndex
+		filterMask |= netlink.RT_FILTER_OIF
+	}
+
+	routes, err := netlink.RouteListFiltered(netlink.FAMILY_ALL, routeFilter, filterMask)
+	if err != nil {
+		return nil, fmt.Errorf("error list route table, err: %v", err)
+	}
+
+	res := sets.NewString()
+	for _, route := range routes {
+		if route.Src != nil {
+			res.Insert(route.Src.String())
+		}
+	}
+	return res, nil
+}
 
 func CreateLibIpvsService(service *Service) (*libipvs.Service, error){
 

@@ -9,6 +9,7 @@ import (
 	utilipvs "kube-enn-proxy/pkg/util/ipvs"
 	libipvs "github.com/docker/libnetwork/ipvs"
 	"github.com/vishvananda/netlink"
+	"k8s.io/apimachinery/pkg/util/sets"
 )
 
 type ServiceKey struct {
@@ -219,6 +220,11 @@ func (f *Faker) ListDuumyClusterIp(link netlink.Link) ([]netlink.Addr, error){
 		addrs = append(addrs,vip)
 	}
 	return addrs, nil
+}
+
+func (f *Faker) GetLocalAddresses(Dev string) (sets.String, error) {
+
+	return nil, nil
 }
 
 func ToProtocolNumber(str string) uint16{
