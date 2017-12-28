@@ -50,6 +50,12 @@ func (f *fakePortOpener) OpenLocalPort(lp *util.LocalPort) (util.Closeable, erro
 	return nil, nil
 }
 
+type fakeNodeIP struct{}
+
+func (f *fakeNodeIP) GetNodeIPs(ipvs utilipvs.Interface) ([]net.IP, error){
+	ips := []net.IP{net.ParseIP("100.101.102.103")}
+	return ips, nil
+}
 
 func makeTestService(namespace, name string, svcFunc func(*api.Service)) *api.Service {
 	svc := &api.Service{
@@ -150,6 +156,7 @@ func NewFakeProxier() *Proxier{
 		clusterCIDR:       "10.0.0.0/24",
 		hostname:          testHostname,
 		nodeIPs:           nodeIPs,
+		nodeIPInterface:   &fakeNodeIP{},
 		exec:              &fakeexec.FakeExec{},
 		scheduler:         utilipvs.DEFAULSCHE,
 		ipvsInterface:     ipvs,

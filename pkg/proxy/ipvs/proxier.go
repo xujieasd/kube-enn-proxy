@@ -34,7 +34,6 @@ import (
 	"kube-enn-proxy/pkg/proxy"
 
 	"github.com/vishvananda/netlink"
-
 )
 
 //var ipvsInterface utilipvs.Interface
@@ -72,6 +71,8 @@ type Proxier struct {
 	hostname            string
 	nodeIP              net.IP
 	nodeIPs             []net.IP
+	nodeIPInterface     util.NodeIPInterface
+
 	scheduler           string
 
 	client              *kubernetes.Clientset
@@ -138,10 +139,6 @@ func NewProxier(
 	if err != nil{
 		return nil, fmt.Errorf("NewProxier failure: GetNodeIP fall: %s", err.Error())
 	}
-	nodeIPs, err := util.GetNodeIPs()
-	if err != nil {
-		glog.Errorf("Failed to get node IP, err: %v", err)
-	}
 
 	var scheduler = utilipvs.DEFAULSCHE
 	if len(config.IpvsScheduler) != 0{
@@ -175,7 +172,7 @@ func NewProxier(
 		clusterCIDR:       clusterCIDR,
 		hostname:          hostname,
 		nodeIP:            nodeIP,
-		nodeIPs:           nodeIPs,
+		nodeIPInterface:   &util.NodeIP{},
 		scheduler:         scheduler,
 		syncPeriod:        syncPeriod,
 		minSyncPeriod:     minSyncPeriod,
@@ -276,6 +273,10 @@ func (proxier *Proxier) syncProxyRules(){
 	replacementPortsMap := map[util.LocalPort]util.Closeable{}
 	proxier.BuildIpvsMap()
 	proxier.BuildClusterMap(dummylink)
+	proxier.nodeIPs, err = proxier.nodeIPInterface.GetNodeIPs(proxier.ipvsInterface)
+	if err != nil {
+		glog.Errorf("Failed to get node IP, err: %v", err)
+	}
 
 	glog.V(4).Infof("Syncing ipvs Proxier rules")
 

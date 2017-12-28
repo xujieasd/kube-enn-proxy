@@ -9,6 +9,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 	apiv1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	utilipvs "kube-enn-proxy/pkg/util/ipvs"
 	"github.com/golang/glog"
 )
 
@@ -61,33 +62,40 @@ func InternalGetNodeHostIP(node *apiv1.Node) (net.IP, error) {
 	return nil, fmt.Errorf("host IP unknown; known addresses: %v", addresses)
 }
 
-func GetNodeIPs() (ips []net.IP, err error) {
+type NodeIPInterface interface {
+	GetNodeIPs(ipvs utilipvs.Interface) ([]net.IP, error)
+}
+
+type NodeIP struct {}
+
+func (ni *NodeIP) GetNodeIPs(ipvs utilipvs.Interface) ([]net.IP, error){
 	interfaces, err := net.Interfaces()
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("get node ip err: %v", err)
+	}
+	nodeAddress, err := ipvs.GetLocalAddresses("")
+	if err != nil{
+		return nil, fmt.Errorf("get node ip err: %v", err)
 	}
 	for i := range interfaces {
 		name := interfaces[i].Name
-		// We assume node ip bind to eth{x} or enp{x}
 		// todo: need to handle how to make 127.0.0.1:nodeport accsessible
-		if !(strings.HasPrefix(name, "eth")||strings.HasPrefix(name, "enp")) {
-			continue
-		}
-		intf, err := net.InterfaceByName(name)
-		if err != nil {
-			continue
-		}
-		addrs, err := intf.Addrs()
-		if err != nil {
-			continue
-		}
-		for _, a := range addrs {
-			if ipnet, ok := a.(*net.IPNet); ok {
-				if ipnet.IP.To4() != nil {
-					ips = append(ips, ipnet.IP.To4())
-				}
+		if (strings.HasPrefix(name, "docker")||
+			strings.HasPrefix(name, "flannel")||
+			strings.HasPrefix(name, "enn-dummy")||
+			strings.HasPrefix(name, "lo")) {
+			fakeAddress, err := ipvs.GetLocalAddresses(name)
+			if err != nil{
+				return nil, fmt.Errorf("get node ip err: %v", err)
 			}
+			nodeAddress = nodeAddress.Difference(fakeAddress)
+
 		}
+
 	}
-	return
+	var ips []net.IP
+	for _, ipStr := range nodeAddress.UnsortedList() {
+		ips = append(ips, net.ParseIP(ipStr))
+	}
+	return ips, err
 }
