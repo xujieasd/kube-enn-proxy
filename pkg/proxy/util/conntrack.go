@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"strings"
 	"strconv"
+	"net"
 
 	"k8s.io/utils/exec"
 
@@ -32,6 +33,72 @@ import (
 
 const noConnectionToDelete = "0 flow entries have been deleted"
 
+// IPPart returns just the IP part of an IP or IP:port or endpoint string. If the IP
+// part is an IPv6 address enclosed in brackets (e.g. "[fd00:1::5]:9999"),
+// then the brackets are stripped as well.
+func IPPart(s string) string {
+	if ip := net.ParseIP(s); ip != nil {
+		// IP address without port
+		return s
+	}
+	// Must be IP:port
+	host, _, err := net.SplitHostPort(s)
+	if err != nil {
+		glog.Errorf("Error parsing '%s': %v", s, err)
+		return ""
+	}
+	// Check if host string is a valid IP address
+	if ip := net.ParseIP(host); ip != nil {
+		return ip.String()
+	} else {
+		glog.Errorf("invalid IP part '%s'", host)
+	}
+	return ""
+}
+
+func IsIPv6(netIP net.IP) bool {
+	return netIP != nil && netIP.To4() == nil
+}
+
+func IsIPv6String(ip string) bool {
+	netIP := net.ParseIP(ip)
+	return IsIPv6(netIP)
+}
+
+func parametersWithFamily(isIPv6 bool, parameters ...string) []string {
+	if isIPv6 {
+		parameters = append(parameters, "-f", "ipv6")
+	}
+	return parameters
+}
+
+// ClearUDPConntrackForIP uses the conntrack tool to delete the conntrack entries
+// for the UDP connections specified by the given service IP
+func ClearUDPConntrackForIP(execer exec.Interface, ip string) error {
+	parameters := parametersWithFamily(IsIPv6String(ip), "-D", "--orig-dst", ip, "-p", "udp")
+	err := ExecConntrackTool(execer, parameters...)
+	if err != nil && !strings.Contains(err.Error(), noConnectionToDelete) {
+		// TODO: Better handling for deletion failure. When failure occur, stale udp connection may not get flushed.
+		// These stale udp connection will keep black hole traffic. Making this a best effort operation for now, since it
+		// is expensive to baby-sit all udp connections to kubernetes services.
+		return fmt.Errorf("error deleting connection tracking state for UDP service IP: %s, error: %v", ip, err)
+	}
+	return nil
+}
+
+// ClearUDPConntrackForPeers uses the conntrack tool to delete the conntrack entries
+// for the UDP connections specified by the {origin, dest} IP pair.
+func ClearUDPConntrackForPeers(execer exec.Interface, origin, dest string) error {
+	parameters := parametersWithFamily(IsIPv6String(origin), "-D", "--orig-dst", origin, "--dst-nat", dest, "-p", "udp")
+	err := ExecConntrackTool(execer, parameters...)
+	if err != nil && !strings.Contains(err.Error(), noConnectionToDelete) {
+		// TODO: Better handling for deletion failure. When failure occur, stale udp connection may not get flushed.
+		// These stale udp connection will keep black hole traffic. Making this a best effort operation for now, since it
+		// is expensive to baby sit all udp connections to kubernetes services.
+		return fmt.Errorf("error deleting conntrack entries for UDP peer {%s, %s}, error: %v", origin, dest, err)
+	}
+	return nil
+}
 
 // Clear UDP conntrack for port or all conntrack entries when port equal zero.
 // When a packet arrives, it will not go through NAT table again, because it is not "the first" packet.

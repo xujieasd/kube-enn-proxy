@@ -6,20 +6,21 @@ import (
 	"io/ioutil"
 	"net"
 	"path"
-	"reflect"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
+	"sync/atomic"
 
 	"github.com/golang/glog"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/apimachinery/pkg/runtime"
+	//"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/util/sets"
+	"k8s.io/apimachinery/pkg/util/wait"
 	api "k8s.io/api/core/v1"
 	"k8s.io/client-go/tools/record"
-	"k8s.io/client-go/util/flowcontrol"
+	//"k8s.io/client-go/util/flowcontrol"
 
 	"kube-enn-proxy/pkg/util/coreos/go-iptables/iptables"
 
@@ -29,11 +30,12 @@ import (
 	//utildbus "kube-enn-proxy/pkg/util/dbus"
 	"kube-enn-proxy/pkg/proxy/util"
 	"kube-enn-proxy/app/options"
-	"kube-enn-proxy/pkg/watchers"
+	//"kube-enn-proxy/pkg/watchers"
 	"kube-enn-proxy/pkg/proxy/healthcheck"
 	"kube-enn-proxy/pkg/proxy"
 
 	"github.com/vishvananda/netlink"
+	"kube-enn-proxy/pkg/util/async"
 )
 
 //var ipvsInterface utilipvs.Interface
@@ -46,24 +48,32 @@ const (
 	sysctlForward            = "net/ipv4/ip_forward"
 )
 
+const(
+	syncFromServiceUpdate    = 1
+	syncFromEnpointUpdate    = 2
+	syncFromProxySyncPeriod  = 3
+)
+
 type Proxier struct {
 
 	mu		    sync.Mutex
+	serviceChanges      util.ServiceChangeMap
+	endpointsChanges    util.EndpointsChangeMap
 	serviceMap          util.ProxyServiceMap
 	endpointsMap        util.ProxyEndpointMap
 	portsMap            map[util.LocalPort]util.Closeable
 	kernelIpvsMap       map[activeServiceKey][]activeServiceValue
 	kernelClusterMap    map[string]int
 
-	throttle            flowcontrol.RateLimiter
+	//throttle            flowcontrol.RateLimiter
 
 	syncPeriod	    time.Duration
 	minSyncPeriod       time.Duration
 
 	endpointsSynced     bool
 	servicesSynced      bool
-
-	//syncRunner          *async.BoundedFrequencyRunner // governs calls to syncProxyRules
+	initialized         int32
+	syncRunner          *async.BoundedFrequencyRunner // governs calls to syncProxyRules
 
 	masqueradeAll       bool
 	exec                utilexec.Interface
@@ -97,10 +107,13 @@ type activeServiceValue struct {
 }
 
 func NewProxier(
-	clientset *kubernetes.Clientset,
-	config    *options.KubeEnnProxyConfig,
+        clientset *kubernetes.Clientset,
+        config    *options.KubeEnnProxyConfig,
         ipvs      utilipvs.Interface,
         execer    utilexec.Interface,
+        hostname  string,
+        nodeIP    net.IP,
+        recorder  record.EventRecorder,
 )(*Proxier, error){
 
 	syncPeriod    := config.IpvsSyncPeriod
@@ -129,16 +142,16 @@ func NewProxier(
 		glog.Warningf("clusterCIDR not specified, unable to distinguish between internal and external traffic")
 	}
 
-	node, err := util.GetNode(clientset,config.HostnameOverride)
-	if err != nil{
-		return nil, fmt.Errorf("NewProxier failure: GetNode fall: %s", err.Error())
-	}
-	hostname := node.Name
+//	node, err := util.GetNode(clientset,config.HostnameOverride)
+//	if err != nil{
+//		return nil, fmt.Errorf("NewProxier failure: GetNode fall: %s", err.Error())
+//	}
+//	hostname := node.Name
 
-	nodeIP, err := util.InternalGetNodeHostIP(node)
-	if err != nil{
-		return nil, fmt.Errorf("NewProxier failure: GetNodeIP fall: %s", err.Error())
-	}
+//	nodeIP, err := util.InternalGetNodeHostIP(node)
+//	if err != nil{
+//		return nil, fmt.Errorf("NewProxier failure: GetNodeIP fall: %s", err.Error())
+//	}
 
 	var scheduler = utilipvs.DEFAULSCHE
 	if len(config.IpvsScheduler) != 0{
@@ -146,27 +159,29 @@ func NewProxier(
 	}
 
 
-	eventBroadcaster := record.NewBroadcaster()
-	scheme := runtime.NewScheme()
-	recorder := eventBroadcaster.NewRecorder(scheme,api.EventSource{Component: "kube-proxy", Host: hostname})
+//	eventBroadcaster := record.NewBroadcaster()
+//	scheme := runtime.NewScheme()
+//	recorder := eventBroadcaster.NewRecorder(scheme,api.EventSource{Component: "kube-proxy", Host: hostname})
 
 	healthchecker := healthcheck.NewServer(hostname,recorder,nil,nil)
 
-	var throttle flowcontrol.RateLimiter
-	if minSyncPeriod != 0{
-		qps := float32(time.Second) / float32(minSyncPeriod)
-		burst := 2
-		glog.V(3).Infof("minSyncPeriod: %v, syncPeriod: %v, burstSyncs: %d", minSyncPeriod, syncPeriod, burst)
-		throttle = flowcontrol.NewTokenBucketRateLimiter(qps,burst)
-	}
+//	var throttle flowcontrol.RateLimiter
+//	if minSyncPeriod != 0{
+//		qps := float32(time.Second) / float32(minSyncPeriod)
+//		burst := 2
+//		glog.V(3).Infof("minSyncPeriod: %v, syncPeriod: %v, burstSyncs: %d", minSyncPeriod, syncPeriod, burst)
+//		throttle = flowcontrol.NewTokenBucketRateLimiter(qps,burst)
+//	}
 
 	IpvsProxier := Proxier{
+		serviceChanges:    util.NewServiceChangeMap(),
+		endpointsChanges:  util.NewEndpointsChangeMap(hostname),
 		serviceMap:        make(util.ProxyServiceMap),
 		endpointsMap:      make(util.ProxyEndpointMap),
 		portsMap:          make(map[util.LocalPort]util.Closeable),
 		kernelIpvsMap:     make(map[activeServiceKey][]activeServiceValue),
 		kernelClusterMap:  make(map[string]int),
-		throttle:          throttle,
+		//throttle:          throttle,
 		masqueradeAll:     masqueradeAll,
 		exec:              execer,
 		clusterCIDR:       clusterCIDR,
@@ -184,9 +199,9 @@ func NewProxier(
 		healthChecker:     healthchecker,
 	}
 
-	//burstSyncs := 2
-	//glog.V(3).Infof("minSyncPeriod: %v, syncPeriod: %v, burstSyncs: %d", minSyncPeriod, syncPeriod, burstSyncs)
-	//IpvsProxier.syncRunner = async.NewBoundedFrequencyRunner("sync-runner", IpvsProxier.syncProxyRules, minSyncPeriod, syncPeriod, burstSyncs)
+	burstSyncs := 2
+	glog.V(3).Infof("minSyncPeriod: %v, syncPeriod: %v, burstSyncs: %d", minSyncPeriod, syncPeriod, burstSyncs)
+	IpvsProxier.syncRunner = async.NewBoundedFrequencyRunner("sync-runner", IpvsProxier.syncProxyRules, minSyncPeriod, syncPeriod, burstSyncs)
 
 	return &IpvsProxier, nil
 
@@ -199,7 +214,24 @@ func FakeProxier() *Proxier{
 	}
 }
 
+func (proxier *Proxier) SyncLoop(stopCh <-chan struct{}, wg *sync.WaitGroup){
 
+	glog.V(2).Infof("Run IPVS Proxier")
+
+	defer wg.Done()
+
+	glog.V(2).Infof("EnsureIPtablesMASQ: start")
+	err := proxier.EnsureIPtablesMASQ()
+	if err!= nil{
+		glog.Errorf("SyncLoop: create MASQ failed: %s", err)
+		return
+	}
+
+	proxier.syncRunner.Loop(wait.NeverStop)
+
+}
+
+/*
 func (proxier *Proxier) SyncLoop(stopCh <-chan struct{}, wg *sync.WaitGroup){
 
 	glog.V(2).Infof("Run IPVS Proxier")
@@ -213,7 +245,6 @@ func (proxier *Proxier) SyncLoop(stopCh <-chan struct{}, wg *sync.WaitGroup){
 		glog.Errorf("SyncLoop: create MASQ failed: %s", err)
 		return
 	}
-
 	for {
 		select {
 		case <-t.C:
@@ -242,25 +273,42 @@ func (proxier *Proxier) Sync(){
 
 
 }
-
+*/
 func (proxier *Proxier) syncProxyRules(){
 
-	if proxier.throttle != nil{
-		proxier.throttle.Accept()
-	}
+//	if proxier.throttle != nil{
+//		proxier.throttle.Accept()
+//	}
+
+	//glog.V(2).Infof("syncProxy called by %d time is %v", calledFunc, calledTime)
 
 	start := time.Now()
 	defer func() {
 		glog.V(4).Infof("syncProxyRules took %v", time.Since(start))
 	}()
 
-//	if !(watchers.ServiceWatchConfig.HasSynced() && watchers.EndpointsWatchConfig.HasSynced()) {
-//		glog.V(3).Infof("Not syncing iptables until Services and Endpoints have been received from master")
-//		return
-//	}
+	// don't sync rules till we've received services and endpoints
+	if !proxier.endpointsSynced || !proxier.servicesSynced {
+		glog.V(2).Info("Not syncing ipvs rules until Services and Endpoints have been received from master")
+		return
+	}
 
 	activeServiceMap := make(map[activeServiceKey][]activeServiceValue)
 	activeBindIP := make(map[string]int)
+
+	serviceUpdateResult := util.UpdateServiceMap(
+		proxier.serviceMap, &proxier.serviceChanges)
+	endpointUpdateResult := util.UpdateEndpointsMap(
+		proxier.endpointsMap, &proxier.endpointsChanges, proxier.hostname)
+
+	staleServices := serviceUpdateResult.StaleServices
+	// merge stale services gathered from updateEndpointsMap
+	for svcPortName := range endpointUpdateResult.StaleServiceNames {
+		if svcInfo, ok := proxier.serviceMap[svcPortName]; ok && svcInfo != nil && svcInfo.Protocol == strings.ToLower(string(api.ProtocolUDP)) {
+			glog.V(2).Infof("Stale udp service %v -> %s", svcPortName, svcInfo.ClusterIP.String())
+			staleServices.Insert(svcInfo.ClusterIP.String())
+		}
+	}
 
 	/* create duumy link */
 	dummylink, err := proxier.ipvsInterface.GetDummyLink()
@@ -472,6 +520,30 @@ func (proxier *Proxier) syncProxyRules(){
 	}
 	proxier.portsMap = replacementPortsMap
 
+	// Finish housekeeping.
+	// TODO: these could be made more consistent.
+	for _, svcIP := range staleServices.UnsortedList() {
+		if err := util.ClearUDPConntrackForIP(proxier.exec, svcIP); err != nil {
+			glog.Errorf("Failed to delete stale service IP %s connections, error: %v", svcIP, err)
+		}
+	}
+	proxier.deleteEndpointConnections(endpointUpdateResult.StaleEndpoints)
+
+}
+
+// After a UDP endpoint has been removed, we must flush any pending conntrack entries to it, or else we
+// risk sending more traffic to it, all of which will be lost (because UDP).
+// This assumes the proxier mutex is held
+func (proxier *Proxier) deleteEndpointConnections(connectionMap map[util.EndpointServicePair]bool) {
+	for epSvcPair := range connectionMap {
+		if svcInfo, ok := proxier.serviceMap[epSvcPair.ServicePortName]; ok && svcInfo.Protocol == strings.ToLower(string(api.ProtocolUDP)) {
+			endpointIP := util.IPPart(epSvcPair.Endpoint)
+			err := util.ClearUDPConntrackForPeers(proxier.exec, svcInfo.ClusterIP.String(), endpointIP)
+			if err != nil {
+				glog.Errorf("Failed to delete %s endpoint connections, error: %v", epSvcPair.ServicePortName.String(), err)
+			}
+		}
+	}
 }
 
 func (proxier *Proxier) CreateServiceRule(hasCluster bool, ipvs_cluster_service *utilipvs.Service) error{
@@ -708,7 +780,9 @@ func isLocalIP(ip string) (bool, error) {
 	return false, nil
 }
 
+/*
 func (proxier *Proxier) OnEndpointsUpdate(endpointsUpdate *watchers.EndpointsUpdate){
+	calledTime := time.Now()
 	proxier.mu.Lock()
 	defer proxier.mu.Unlock()
 
@@ -720,7 +794,7 @@ func (proxier *Proxier) OnEndpointsUpdate(endpointsUpdate *watchers.EndpointsUpd
 
 	if len(newEndpointsMap) != len(proxier.endpointsMap) || !reflect.DeepEqual(newEndpointsMap, proxier.endpointsMap) {
 		proxier.endpointsMap = newEndpointsMap
-		proxier.syncProxyRules()
+		proxier.syncProxyRules(calledTime, syncFromServiceUpdate)
 	} else {
 		glog.V(3).Infof("Skipping proxy ipvs rule sync on endpoint update because nothing changed")
 	}
@@ -728,6 +802,7 @@ func (proxier *Proxier) OnEndpointsUpdate(endpointsUpdate *watchers.EndpointsUpd
 }
 
 func (proxier *Proxier) OnServicesUpdate(servicesUpdate *watchers.ServicesUpdate){
+	calledTime := time.Now()
 	proxier.mu.Lock()
 	defer proxier.mu.Unlock()
 
@@ -739,11 +814,93 @@ func (proxier *Proxier) OnServicesUpdate(servicesUpdate *watchers.ServicesUpdate
 
 	if len(newServiceMap) != len(proxier.serviceMap) || !reflect.DeepEqual(newServiceMap, proxier.serviceMap) {
 		proxier.serviceMap = newServiceMap
-		proxier.syncProxyRules()
+		proxier.syncProxyRules(calledTime, syncFromEnpointUpdate)
 	} else {
 		glog.V(3).Infof("Skipping proxy ipvs rule sync on service update because nothing changed")
 	}
 	util.DeleteServiceConnections(proxier.exec, staleUDPServices.List())
+}
+*/
+
+// OnServiceAdd is called whenever creation of new service object is observed.
+func (proxier *Proxier) OnServiceAdd(service *api.Service) {
+	namespacedName := types.NamespacedName{Namespace: service.Namespace, Name: service.Name}
+	if proxier.serviceChanges.Update(&namespacedName, nil, service) && proxier.isInitialized() {
+		proxier.syncRunner.Run()
+	}
+}
+
+// OnServiceUpdate is called whenever modification of an existing service object is observed.
+func (proxier *Proxier) OnServiceUpdate(oldService, service *api.Service) {
+	namespacedName := types.NamespacedName{Namespace: service.Namespace, Name: service.Name}
+	if proxier.serviceChanges.Update(&namespacedName, oldService, service) && proxier.isInitialized() {
+		proxier.syncRunner.Run()
+	}
+}
+
+// OnServiceDelete is called whenever deletion of an existing service object is observed.
+func (proxier *Proxier) OnServiceDelete(service *api.Service) {
+	namespacedName := types.NamespacedName{Namespace: service.Namespace, Name: service.Name}
+	if proxier.serviceChanges.Update(&namespacedName, service, nil) && proxier.isInitialized() {
+		proxier.syncRunner.Run()
+	}
+}
+
+// OnServiceSynced is called once all the initial even handlers were called and the state is fully propagated to local cache.
+func (proxier *Proxier) OnServiceSynced() {
+	proxier.mu.Lock()
+	proxier.servicesSynced = true
+	proxier.setInitialized(proxier.servicesSynced && proxier.endpointsSynced)
+	proxier.mu.Unlock()
+
+	// Sync unconditionally - this is called once per lifetime.
+	proxier.syncProxyRules()
+}
+
+
+// OnEndpointsAdd is called whenever creation of new endpoints object is observed.
+func (proxier *Proxier) OnEndpointsAdd(endpoints *api.Endpoints) {
+	namespacedName := types.NamespacedName{Namespace: endpoints.Namespace, Name: endpoints.Name}
+	if proxier.endpointsChanges.Update(&namespacedName, nil, endpoints) && proxier.isInitialized() {
+		proxier.syncRunner.Run()
+	}
+}
+
+// OnEndpointsUpdate is called whenever modification of an existing endpoints object is observed.
+func (proxier *Proxier) OnEndpointsUpdate(oldEndpoints, endpoints *api.Endpoints) {
+	namespacedName := types.NamespacedName{Namespace: endpoints.Namespace, Name: endpoints.Name}
+	if proxier.endpointsChanges.Update(&namespacedName, oldEndpoints, endpoints) && proxier.isInitialized() {
+		proxier.syncRunner.Run()
+	}
+}
+
+// OnEndpointsDelete is called whenever deletion of an existing endpoints object is observed.
+func (proxier *Proxier) OnEndpointsDelete(endpoints *api.Endpoints) {
+	namespacedName := types.NamespacedName{Namespace: endpoints.Namespace, Name: endpoints.Name}
+	if proxier.endpointsChanges.Update(&namespacedName, endpoints, nil) && proxier.isInitialized() {
+		proxier.syncRunner.Run()
+	}
+}
+
+// OnEndpointsSynced is called once all the initial event handlers were called and the state is fully propagated to local cache.
+func (proxier *Proxier) OnEndpointsSynced() {
+	proxier.mu.Lock()
+	proxier.endpointsSynced = true
+	proxier.mu.Unlock()
+
+	proxier.syncProxyRules()
+}
+
+func (proxier *Proxier) setInitialized(value bool) {
+	var initialized int32
+	if value {
+		initialized = 1
+	}
+	atomic.StoreInt32(&proxier.initialized, initialized)
+}
+
+func (proxier *Proxier) isInitialized() bool {
+	return atomic.LoadInt32(&proxier.initialized) > 0
 }
 
 
