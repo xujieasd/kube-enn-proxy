@@ -83,6 +83,7 @@ func (ni *NodeIP) GetNodeIPs(ipvs utilipvs.Interface) ([]net.IP, error){
 		if (strings.HasPrefix(name, "docker")||
 			strings.HasPrefix(name, "flannel")||
 			strings.HasPrefix(name, "enn-dummy")||
+			strings.HasPrefix(name, "cni")||
 			strings.HasPrefix(name, "lo")) {
 			fakeAddress, err := ipvs.GetLocalAddresses(name)
 			if err != nil{
