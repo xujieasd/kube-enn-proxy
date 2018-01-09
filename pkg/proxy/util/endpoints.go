@@ -35,14 +35,14 @@ type UpdateEndpointMapResult struct {
 }
 
 type EndpointsChange struct {
-	previous ProxyEndpointMap
-	current  ProxyEndpointMap
+	Previous ProxyEndpointMap
+	Current  ProxyEndpointMap
 }
 
 type EndpointsChangeMap struct {
-	lock     sync.Mutex
-	hostname string
-	items    map[types.NamespacedName]*EndpointsChange
+	Lock     sync.Mutex
+	Hostname string
+	Items    map[types.NamespacedName]*EndpointsChange
 }
 
 func BuildEndPointsMap(hostname string, curMap ProxyEndpointMap) (ProxyEndpointMap, map[EndpointServicePair]bool){
@@ -142,26 +142,26 @@ func NewEndpointsInfo(address api.EndpointAddress, port api.EndpointPort, hostna
 
 func NewEndpointsChangeMap(hostname string) EndpointsChangeMap {
 	return EndpointsChangeMap{
-		hostname: hostname,
-		items:    make(map[types.NamespacedName]*EndpointsChange),
+		Hostname: hostname,
+		Items:    make(map[types.NamespacedName]*EndpointsChange),
 	}
 }
 
 func (ecm *EndpointsChangeMap) Update(namespacedName *types.NamespacedName, previous, current *api.Endpoints) bool {
-	ecm.lock.Lock()
-	defer ecm.lock.Unlock()
+	ecm.Lock.Lock()
+	defer ecm.Lock.Unlock()
 
-	change, exists := ecm.items[*namespacedName]
+	change, exists := ecm.Items[*namespacedName]
 	if !exists {
 		change = &EndpointsChange{}
-		change.previous = endpointsToEndpointsMap(previous, ecm.hostname)
-		ecm.items[*namespacedName] = change
+		change.Previous = endpointsToEndpointsMap(previous, ecm.Hostname)
+		ecm.Items[*namespacedName] = change
 	}
-	change.current = endpointsToEndpointsMap(current, ecm.hostname)
-	if reflect.DeepEqual(change.previous, change.current) {
-		delete(ecm.items, *namespacedName)
+	change.Current = endpointsToEndpointsMap(current, ecm.Hostname)
+	if reflect.DeepEqual(change.Previous, change.Current) {
+		delete(ecm.Items, *namespacedName)
 	}
-	return len(ecm.items) > 0
+	return len(ecm.Items) > 0
 }
 
 // Translates single Endpoints object to proxyEndpointsMap.
@@ -220,14 +220,14 @@ func UpdateEndpointsMap(endpointsMap ProxyEndpointMap, changes *EndpointsChangeM
 	result.StaleServiceNames = make(map[proxy.ServicePortName]bool)
 
 	func() {
-		changes.lock.Lock()
-		defer changes.lock.Unlock()
-		for _, change := range changes.items {
-			endpointsMap.unmerge(change.previous)
-			endpointsMap.merge(change.current)
-			detectStaleConnections(change.previous, change.current, result.StaleEndpoints, result.StaleServiceNames)
+		changes.Lock.Lock()
+		defer changes.Lock.Unlock()
+		for _, change := range changes.Items {
+			endpointsMap.unmerge(change.Previous)
+			endpointsMap.merge(change.Current)
+			detectStaleConnections(change.Previous, change.Current, result.StaleEndpoints, result.StaleServiceNames)
 		}
-		changes.items = make(map[types.NamespacedName]*EndpointsChange)
+		//changes.Items = make(map[types.NamespacedName]*EndpointsChange)
 	}()
 
 //	if !utilfeature.DefaultFeatureGate.Enabled(features.ExternalTrafficLocalOnly) {

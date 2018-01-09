@@ -32,13 +32,13 @@ type ServiceInfo struct {
 type ProxyServiceMap map[proxy.ServicePortName]*ServiceInfo
 
 type ServiceChangeMap struct {
-	lock  sync.Mutex
-	items map[types.NamespacedName]*ServiceChange
+	Lock  sync.Mutex
+	Items map[types.NamespacedName]*ServiceChange
 }
 
 type ServiceChange struct {
-	previous ProxyServiceMap
-	current  ProxyServiceMap
+	Previous ProxyServiceMap
+	Current  ProxyServiceMap
 }
 
 type UpdateServiceMapResult struct {
@@ -144,25 +144,25 @@ func NewServiceInfo(serviceName proxy.ServicePortName, port *api.ServicePort, se
 
 func NewServiceChangeMap() ServiceChangeMap {
 	return ServiceChangeMap{
-		items: make(map[types.NamespacedName]*ServiceChange),
+		Items: make(map[types.NamespacedName]*ServiceChange),
 	}
 }
 
 func (scm *ServiceChangeMap) Update(namespacedName *types.NamespacedName, previous, current *api.Service) bool {
-	scm.lock.Lock()
-	defer scm.lock.Unlock()
+	scm.Lock.Lock()
+	defer scm.Lock.Unlock()
 
-	change, exists := scm.items[*namespacedName]
+	change, exists := scm.Items[*namespacedName]
 	if !exists {
 		change = &ServiceChange{}
-		change.previous = serviceToServiceMap(previous)
-		scm.items[*namespacedName] = change
+		change.Previous = serviceToServiceMap(previous)
+		scm.Items[*namespacedName] = change
 	}
-	change.current = serviceToServiceMap(current)
-	if reflect.DeepEqual(change.previous, change.current) {
-		delete(scm.items, *namespacedName)
+	change.Current = serviceToServiceMap(current)
+	if reflect.DeepEqual(change.Previous, change.Current) {
+		delete(scm.Items, *namespacedName)
 	}
-	return len(scm.items) > 0
+	return len(scm.Items) > 0
 }
 
 // Translates single Service object to proxyServiceMap.
@@ -210,13 +210,13 @@ func UpdateServiceMap(serviceMap ProxyServiceMap, changes *ServiceChangeMap) (re
 	result.StaleServices = sets.NewString()
 
 	func() {
-		changes.lock.Lock()
-		defer changes.lock.Unlock()
-		for _, change := range changes.items {
-			existingPorts := serviceMap.merge(change.current)
-			serviceMap.unmerge(change.previous, existingPorts, result.StaleServices)
+		changes.Lock.Lock()
+		defer changes.Lock.Unlock()
+		for _, change := range changes.Items {
+			existingPorts := serviceMap.merge(change.Current)
+			serviceMap.unmerge(change.Previous, existingPorts, result.StaleServices)
 		}
-		changes.items = make(map[types.NamespacedName]*ServiceChange)
+		//changes.Items = make(map[types.NamespacedName]*ServiceChange)
 	}()
 
 	// TODO: If this will appear to be computationally expensive, consider
