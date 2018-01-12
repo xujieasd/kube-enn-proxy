@@ -35,6 +35,26 @@ func NewFake() *Faker{
 	}
 }
 
+func (f *Faker) GetIpvsService(service *utilipvs.Service) (*libipvs.Service,error) {
+
+	key := ServiceKey{
+		ip:       service.ClusterIP.String(),
+		port:     service.Port,
+		protocol: service.Protocol,
+	}
+	_, ok := f.IpvsMap[key]
+	if !ok{
+		return nil, fmt.Errorf("GetIpvsServer fail: service %s:%d not find in ipvs rule", service.ClusterIP.String(), service.Port)
+	}
+
+	svc := &libipvs.Service{
+		Address:   service.ClusterIP,
+		Protocol:  ToProtocolNumber(service.Protocol),
+		Port:      uint16(service.Port),
+	}
+	return svc, nil
+}
+
 func (f *Faker) ListIpvsService() ([]*libipvs.Service,error){
 
 	services := make([]*libipvs.Service,0)
@@ -66,7 +86,7 @@ func (f *Faker) ListIpvsServer(service *libipvs.Service) ([]*utilipvs.Server,err
 
 	dsts, ok := f.IpvsMap[key]
 	if !ok{
-		return nil, fmt.Errorf("DeleteIpvsServer fail: service %s:%d not find in ipvs rule", InterSvc.ClusterIP.String(), InterSvc.Port)
+		return nil, fmt.Errorf("ListIpvsServer fail: service %s:%d not find in ipvs rule", InterSvc.ClusterIP.String(), InterSvc.Port)
 	}
 
 	for _, dst := range dsts{
@@ -89,6 +109,12 @@ func (f *Faker) AddIpvsService(service *utilipvs.Service) error{
 		port:     service.Port,
 		protocol: service.Protocol,
 	}
+
+	fmt.Printf("add ipvssvc %s:%d\n",key.ip,key.port)
+	_, ok := f.IpvsMap[key]
+	if ok{
+		return nil
+	}
 	f.IpvsMap[key] = make([]ServiceValue,0)
 	return nil
 }
@@ -96,13 +122,14 @@ func (f *Faker) AddIpvsService(service *utilipvs.Service) error{
 func (f *Faker) DeleteIpvsService(service *utilipvs.Service) error{
 
 	if service == nil{
-		return fmt.Errorf("AddIpvsService fail: server is nil")
+		return fmt.Errorf("DeleteIpvsService fail: server is nil")
 	}
 	key := ServiceKey{
 		ip:       service.ClusterIP.String(),
 		port:     service.Port,
 		protocol: service.Protocol,
 	}
+	fmt.Printf("del ipvssvc %s:%d\n",key.ip,key.port)
 	delete(f.IpvsMap,key)
 	return nil
 }

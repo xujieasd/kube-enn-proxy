@@ -73,22 +73,7 @@ func makeTestService(namespace, name string, svcFunc func(*api.Service)) *api.Se
 
 func makeServiceMap(proxier *Proxier, allServices ...*api.Service) {
 	for i := range allServices {
-		svcName := types.NamespacedName{
-			Namespace: allServices[i].Namespace,
-			Name:      allServices[i].Name,
-		}
-		for j := range allServices[i].Spec.Ports {
-			servicePort := &allServices[i].Spec.Ports[j]
-
-			serviceName := proxy.ServicePortName{
-				NamespacedName: svcName,
-				Port:           servicePort.Name,
-			}
-
-			info := util.NewServiceInfo(serviceName, servicePort, allServices[i])
-
-			proxier.serviceMap[serviceName] = info
-		}
+		proxier.OnServiceAdd(allServices[i])
 	}
 
 	proxier.mu.Lock()
@@ -109,25 +94,7 @@ func makeTestEndpoints(namespace, name string, eptFunc func(*api.Endpoints)) *ap
 
 func makeEndpointsMap(proxier *Proxier, allEndpoints ...*api.Endpoints) {
 	for i := range allEndpoints {
-		svcName := types.NamespacedName{
-			Namespace: allEndpoints[i].Namespace,
-			Name:      allEndpoints[i].Name,
-		}
-		for _, endpoints_sub := range allEndpoints[i].Subsets{
-			for _, ports := range endpoints_sub.Ports{
-				serviceName := proxy.ServicePortName{
-					NamespacedName: svcName,
-					Port:           ports.Name,
-				}
-
-				for _, addr := range endpoints_sub.Addresses{
-
-					info := util.NewEndpointsInfo(addr,ports,testHostname)
-
-					proxier.endpointsMap[serviceName] = append(proxier.endpointsMap[serviceName], info)
-				}
-			}
-		}
+		proxier.OnEndpointsAdd(allEndpoints[i])
 	}
 
 	proxier.mu.Lock()
@@ -148,6 +115,8 @@ func NewFakeProxier() *Proxier{
 	nodeIPs := FakeGetNodeIPs()
 
 	return &Proxier{
+		serviceChanges:    util.NewServiceChangeMap(),
+		endpointsChanges:  util.NewEndpointsChangeMap(testHostname),
 		serviceMap:        make(util.ProxyServiceMap),
 		endpointsMap:      make(util.ProxyEndpointMap),
 		portsMap:          make(map[util.LocalPort]util.Closeable),
@@ -195,26 +164,26 @@ func TestClusterIP(t *testing.T){
 
 	makeEndpointsMap(fp,
 		makeTestEndpoints(svcPortName.Namespace, svcPortName.Name, func(ept *api.Endpoints) {
-			ept.Subsets = []api.EndpointSubset{{
-				Addresses: []api.EndpointAddress{{
-					IP: epIP1,
-				}},
-				Ports: []api.EndpointPort{{
-					Name: svcPortName.Port,
-					Port: int32(epPort1),
-				}},
-			}}
-		}),
-		makeTestEndpoints(svcPortName.Namespace, svcPortName.Name, func(ept *api.Endpoints) {
-			ept.Subsets = []api.EndpointSubset{{
-				Addresses: []api.EndpointAddress{{
-					IP: epIP2,
-				}},
-				Ports: []api.EndpointPort{{
-					Name: svcPortName.Port,
-					Port: int32(epPort2),
-				}},
-			}}
+			ept.Subsets = []api.EndpointSubset{
+				{
+					Addresses: []api.EndpointAddress{{
+						IP: epIP1,
+					}},
+					Ports: []api.EndpointPort{{
+						Name: svcPortName.Port,
+						Port: int32(epPort1),
+					}},
+				},
+				{
+					Addresses: []api.EndpointAddress{{
+						IP: epIP2,
+					}},
+					Ports: []api.EndpointPort{{
+						Name: svcPortName.Port,
+						Port: int32(epPort2),
+					}},
+				},
+			}
 		}),
 	)
 
@@ -235,7 +204,7 @@ func TestClusterIP(t *testing.T){
 	if err != nil{
 		t.Errorf("checkEndpointNumber failed: %v", err)
 	}else if endpointNumber != 2{
-		t.Errorf("svcNumber: %d, expected: 2", endpointNumber)
+		t.Errorf("endpointNumber: %d, expected: 2", endpointNumber)
 	}
 	checkRule, err := fp.hasRuleDestination("10.20.30.41",80,"10.180.0.1",80)
 	if !checkRule{
@@ -308,7 +277,7 @@ func TestNodePort(t *testing.T) {
 	if err != nil{
 		t.Errorf("checkEndpointNumber failed: %v", err)
 	}else if endpointNumber != 1{
-		t.Errorf("svcNumber: %d, expected: 1", endpointNumber)
+		t.Errorf("endpointNumber: %d, expected: 1", endpointNumber)
 	}
 	checkRule, err := fp.hasRuleDestination("10.20.30.41",80,"10.180.0.1",80)
 	if !checkRule{
@@ -319,7 +288,7 @@ func TestNodePort(t *testing.T) {
 	if err != nil{
 		t.Errorf("checkEndpointNumber failed: %v", err)
 	}else if endpointNumber != 1{
-		t.Errorf("svcNumber: %d, expected: 1", endpointNumber)
+		t.Errorf("endpointNumber: %d, expected: 1", endpointNumber)
 	}
 	checkRule, err = fp.hasRuleDestination("100.101.102.103",30001,"10.180.0.1",80)
 	if !checkRule{
@@ -388,7 +357,7 @@ func TestExternalIP (t *testing.T){
 	if err != nil{
 		t.Errorf("checkEndpointNumber failed: %v", err)
 	}else if endpointNumber != 1{
-		t.Errorf("svcNumber: %d, expected: 1", endpointNumber)
+		t.Errorf("endpointNumber: %d, expected: 1", endpointNumber)
 	}
 	checkRule, err := fp.hasRuleDestination("10.20.30.41",80,"10.180.0.1",80)
 	if !checkRule{
@@ -399,7 +368,7 @@ func TestExternalIP (t *testing.T){
 	if err != nil{
 		t.Errorf("checkEndpointNumber failed: %v", err)
 	}else if endpointNumber != 1{
-		t.Errorf("svcNumber: %d, expected: 1", endpointNumber)
+		t.Errorf("endpointNumber: %d, expected: 1", endpointNumber)
 	}
 	checkRule, err = fp.hasRuleDestination("50.60.70.80",80,"10.180.0.1",80)
 	if !checkRule{
@@ -410,7 +379,7 @@ func TestExternalIP (t *testing.T){
 	if err != nil{
 		t.Errorf("checkEndpointNumber failed: %v", err)
 	}else if endpointNumber != 1{
-		t.Errorf("svcNumber: %d, expected: 1", endpointNumber)
+		t.Errorf("endpointNumber: %d, expected: 1", endpointNumber)
 	}
 	checkRule, err = fp.hasRuleDestination("50.60.70.81",80,"10.180.0.1",80)
 	if !checkRule{
@@ -457,21 +426,48 @@ func TestClusterIPBindUnBind(t *testing.T){
 		}),
 	}
 
-	clusterIPBindUnBindTest(t, fp, 1, services[0])
-	clusterIPBindUnBindTest(t, fp, 1, services[0], services[1])
-	clusterIPBindUnBindTest(t, fp, 1, services[0], services[1], services[2])
-	clusterIPBindUnBindTest(t, fp, 2, services[0], services[1], services[2], services[3])
-	clusterIPBindUnBindTest(t, fp, 2, services[0], services[2], services[3])
-	clusterIPBindUnBindTest(t, fp, 2, services[0], services[1], services[2], services[3], services[4])
-	clusterIPBindUnBindTest(t, fp, 3, services[0], services[1], services[2], services[3], services[4], services[5])
+	fp.endpointsSynced = true
+	fp.servicesSynced  = true
+
+	fp.OnServiceAdd(services[0])
+	clusterIPBindUnBindTest(t, 0, fp, 1)
+
+	fp.OnServiceAdd(services[1])
+	clusterIPBindUnBindTest(t, 1, fp, 1)
+
+	fp.OnServiceAdd(services[2])
+	clusterIPBindUnBindTest(t, 2, fp, 1)
+
+	fp.OnServiceAdd(services[3])
+	clusterIPBindUnBindTest(t, 3, fp, 2)
+
+	fp.OnServiceDelete(services[1])
+	clusterIPBindUnBindTest(t, 4, fp, 2)
+
+	fp.OnServiceAdd(services[4])
+	clusterIPBindUnBindTest(t, 5, fp, 2)
+
+	fp.OnServiceAdd(services[5])
+	clusterIPBindUnBindTest(t, 6, fp, 3)
+
+	fp.OnServiceAdd(services[1])
+	clusterIPBindUnBindTest(t, 7, fp, 3)
 
 	clusterIPHasBind(t, fp, "172.16.55.4")
 	clusterIPHasBind(t, fp, "172.16.55.8")
 	clusterIPHasBind(t, fp, "172.16.55.7")
 
-	clusterIPBindUnBindTest(t, fp, 3, services[1], services[2], services[3], services[4], services[5])
-	clusterIPBindUnBindTest(t, fp, 3, services[2], services[3], services[5])
-	clusterIPBindUnBindTest(t, fp, 2, services[0], services[1], services[2], services[5])
+	fp.OnServiceDelete(services[0])
+	fp.OnServiceDelete(services[1])
+	clusterIPBindUnBindTest(t, 8, fp, 3)
+
+	fp.OnServiceDelete(services[4])
+	clusterIPBindUnBindTest(t, 9, fp, 3)
+
+	fp.OnServiceDelete(services[3])
+	fp.OnServiceAdd(services[0])
+	fp.OnServiceAdd(services[1])
+	clusterIPBindUnBindTest(t, 10, fp, 2)
 
 	clusterIPHasBind(t, fp, "172.16.55.4")
 	clusterIPHasBind(t, fp, "172.16.55.8")
@@ -517,17 +513,42 @@ func TestServiceAddRemove(t *testing.T){
 		}),
 	}
 
+	fp.endpointsSynced = true
+	fp.servicesSynced  = true
 
-	serviceAddRemoveTest(t, fp, 4,  services[0],services[1])
-	serviceAddRemoveTest(t, fp, 6,  services[0],services[1],services[2])
-	serviceAddRemoveTest(t, fp, 7,  services[0],services[1],services[3])
-	serviceAddRemoveTest(t, fp, 9,  services[0],services[1],services[2],services[3])
-	serviceAddRemoveTest(t, fp, 12, services[0],services[1],services[2],services[3],services[4])
-	serviceAddRemoveTest(t, fp, 12, services[0],services[1],services[2],services[3],services[4])
-	serviceAddRemoveTest(t, fp, 10, services[0],services[2],services[3],services[4])
-	serviceAddRemoveTest(t, fp, 3,  services[4])
-	serviceAddRemoveTest(t, fp, 12, services[0],services[1],services[2],services[3],services[4])
-	serviceAddRemoveTest(t, fp, 10, services[1],services[2],services[3],services[4])
+	fp.OnServiceAdd(services[0])
+	fp.OnServiceAdd(services[1])
+	serviceAddRemoveTest(t, 0, fp, 4)
+
+	fp.OnServiceAdd(services[2])
+	serviceAddRemoveTest(t, 1, fp, 6)
+
+	fp.OnServiceAdd(services[3])
+	fp.OnServiceDelete(services[2])
+	serviceAddRemoveTest(t, 2, fp, 7)
+
+	fp.OnServiceAdd(services[2])
+	serviceAddRemoveTest(t, 3, fp, 9)
+
+	fp.OnServiceAdd(services[4])
+	serviceAddRemoveTest(t, 4, fp, 12)
+
+	fp.OnServiceDelete(services[1])
+	serviceAddRemoveTest(t, 5, fp, 10)
+
+	fp.OnServiceDelete(services[0])
+	fp.OnServiceDelete(services[2])
+	fp.OnServiceDelete(services[3])
+	serviceAddRemoveTest(t, 6, fp, 3)
+
+	fp.OnServiceAdd(services[0])
+	fp.OnServiceAdd(services[1])
+	fp.OnServiceAdd(services[2])
+	fp.OnServiceAdd(services[3])
+	serviceAddRemoveTest(t, 7, fp, 12)
+
+	fp.OnServiceDelete(services[0])
+	serviceAddRemoveTest(t, 8, fp, 10)
 
 	serviceHasNotRule(t, fp, "172.16.55.4", 1234)
 	serviceHasNotRule(t, fp, "172.16.55.4", 1235)
@@ -541,6 +562,88 @@ func TestServiceAddRemove(t *testing.T){
 	serviceHasRule(t, fp, "172.16.55.8", 3236)
 	serviceHasRule(t, fp, "172.16.55.8", 3236)
 	serviceHasRule(t, fp, "172.16.55.8", 3236)
+
+}
+
+func TestBuildServiceMapServiceUpdate(t *testing.T) {
+
+	fp := NewFakeProxier()
+
+	servicev1 := makeTestService("somewhere", "some-service", func(svc *api.Service) {
+		svc.Spec.Type = api.ServiceTypeClusterIP
+		svc.Spec.ClusterIP = "100.16.55.4"
+		svc.Spec.Ports = addTestPort(svc.Spec.Ports, "something", "TCP", 1234, 0, 0)
+		svc.Spec.Ports = addTestPort(svc.Spec.Ports, "somethingelse", "TCP", 1235, 0, 0)
+	})
+	servicev2 := makeTestService("somewhere", "some-service", func(svc *api.Service) {
+		svc.Spec.Type = api.ServiceTypeClusterIP
+		svc.Spec.ClusterIP = "100.16.55.4"
+		svc.Spec.Ports = addTestPort(svc.Spec.Ports, "something1", "TCP", 1234, 0, 0)
+		svc.Spec.Ports = addTestPort(svc.Spec.Ports, "something2", "TCP", 1235, 0, 0)
+		svc.Spec.Ports = addTestPort(svc.Spec.Ports, "something3", "TCP", 1236, 0, 0)
+	})
+
+	servicev3 := makeTestService("somewhere", "some-service", func(svc *api.Service) {
+		svc.Spec.Type = api.ServiceTypeNodePort
+		svc.Spec.ClusterIP = "100.16.55.4"
+		svc.Spec.Ports = addTestPort(svc.Spec.Ports, "something", "TCP", 1234, 4321, 0)
+		svc.Spec.Ports = addTestPort(svc.Spec.Ports, "somethingelse", "TCP", 1235, 5321, 0)
+	})
+
+	fp.endpointsSynced = true
+	fp.servicesSynced  = true
+
+	fp.OnServiceAdd(servicev1)
+	fp.syncProxyRules()
+	if len(fp.serviceMap) != 2 {
+		t.Errorf("expected service map length 2, got %v", fp.serviceMap)
+	}
+	svcNumber, err := fp.checkSvcNumber()
+	expected := 2
+	if err != nil{
+		t.Errorf("checkSvcNumer failed: %v", err)
+	}else if svcNumber != expected{
+		t.Errorf("svcNumber: %d, expected: %d", svcNumber, expected)
+	}
+
+	fp.OnServiceUpdate(servicev1, servicev2)
+	fp.syncProxyRules()
+	if len(fp.serviceMap) != 3 {
+		t.Errorf("expected service map length 2, got %v", fp.serviceMap)
+	}
+	svcNumber, err = fp.checkSvcNumber()
+	expected = 3
+	if err != nil{
+		t.Errorf("checkSvcNumer failed: %v", err)
+	}else if svcNumber != expected{
+		t.Errorf("svcNumber: %d, expected: %d", svcNumber, expected)
+	}
+
+	fp.OnServiceUpdate(servicev2, servicev2)
+	fp.syncProxyRules()
+	if len(fp.serviceMap) != 3 {
+		t.Errorf("expected service map length 2, got %v", fp.serviceMap)
+	}
+	svcNumber, err = fp.checkSvcNumber()
+	expected = 3
+	if err != nil{
+		t.Errorf("checkSvcNumer failed: %v", err)
+	}else if svcNumber != expected{
+		t.Errorf("svcNumber: %d, expected: %d", svcNumber, expected)
+	}
+
+	fp.OnServiceUpdate(servicev2, servicev3)
+	fp.syncProxyRules()
+	if len(fp.serviceMap) != 2 {
+		t.Errorf("expected service map length 2, got %v", fp.serviceMap)
+	}
+	svcNumber, err = fp.checkSvcNumber()
+	expected = 4
+	if err != nil{
+		t.Errorf("checkSvcNumer failed: %v", err)
+	}else if svcNumber != expected{
+		t.Errorf("svcNumber: %d, expected: %d", svcNumber, expected)
+	}
 
 }
 
@@ -582,110 +685,212 @@ func TestEndpointAddRemove (t *testing.T){
 		{"1.1.2.4", 24},
 	}
 
+	endPointSub := []api.EndpointSubset{
+		{
+			Addresses: []api.EndpointAddress{{
+				IP: eps[0].ip,
+			}},
+			Ports: []api.EndpointPort{{
+				Name: svcPortName.Port,
+				Port: int32(eps[0].port),
+			}},
+		},
+		{
+			Addresses: []api.EndpointAddress{{
+				IP: eps[1].ip,
+			}},
+			Ports: []api.EndpointPort{{
+				Name: svcPortName.Port,
+				Port: int32(eps[1].port),
+			}},
+		},
+		{
+			Addresses: []api.EndpointAddress{{
+				IP: eps[2].ip,
+			}},
+			Ports: []api.EndpointPort{{
+				Name: svcPortName.Port,
+				Port: int32(eps[2].port),
+			}},
+		},
+		{
+			Addresses: []api.EndpointAddress{{
+				IP: eps[3].ip,
+			}},
+			Ports: []api.EndpointPort{{
+				Name: svcPortName.Port,
+				Port: int32(eps[3].port),
+			}},
+		},
+		{
+			Addresses: []api.EndpointAddress{{
+				IP: eps[4].ip,
+			}},
+			Ports: []api.EndpointPort{{
+				Name: svcPortName.Port,
+				Port: int32(eps[4].port),
+			}},
+		},
+		{
+			Addresses: []api.EndpointAddress{{
+				IP: eps[5].ip,
+			}},
+			Ports: []api.EndpointPort{{
+				Name: svcPortName.Port,
+				Port: int32(eps[5].port),
+			}},
+		},
+		{
+			Addresses: []api.EndpointAddress{{
+				IP: eps[6].ip,
+			}},
+			Ports: []api.EndpointPort{{
+				Name: svcPortName.Port,
+				Port: int32(eps[6].port),
+			}},
+		},
+		{
+			Addresses: []api.EndpointAddress{{
+				IP: eps[7].ip,
+			}},
+			Ports: []api.EndpointPort{{
+				Name: svcPortName.Port,
+				Port: int32(eps[7].port),
+			}},
+		},
+	}
+
 	endpoints := []*api.Endpoints{
 		makeTestEndpoints(svcPortName.Namespace, svcPortName.Name, func(ept *api.Endpoints) {
-			ept.Subsets = []api.EndpointSubset{{
-				Addresses: []api.EndpointAddress{{
-					IP: eps[0].ip,
-				}},
-				Ports: []api.EndpointPort{{
-					Name: svcPortName.Port,
-					Port: int32(eps[0].port),
-				}},
-			}}
+			ept.Subsets = []api.EndpointSubset{
+				endPointSub[0],
+			}
 		}),
 		makeTestEndpoints(svcPortName.Namespace, svcPortName.Name, func(ept *api.Endpoints) {
-			ept.Subsets = []api.EndpointSubset{{
-				Addresses: []api.EndpointAddress{{
-					IP: eps[1].ip,
-				}},
-				Ports: []api.EndpointPort{{
-					Name: svcPortName.Port,
-					Port: int32(eps[1].port),
-				}},
-			}}
+			ept.Subsets = []api.EndpointSubset{
+				endPointSub[0],
+				endPointSub[1],
+			}
 		}),
 		makeTestEndpoints(svcPortName.Namespace, svcPortName.Name, func(ept *api.Endpoints) {
-			ept.Subsets = []api.EndpointSubset{{
-				Addresses: []api.EndpointAddress{{
-					IP: eps[2].ip,
-				}},
-				Ports: []api.EndpointPort{{
-					Name: svcPortName.Port,
-					Port: int32(eps[2].port),
-				}},
-			}}
+			ept.Subsets = []api.EndpointSubset{
+				endPointSub[0],
+				endPointSub[1],
+				endPointSub[2],
+				endPointSub[3],
+			}
 		}),
 		makeTestEndpoints(svcPortName.Namespace, svcPortName.Name, func(ept *api.Endpoints) {
-			ept.Subsets = []api.EndpointSubset{{
-				Addresses: []api.EndpointAddress{{
-					IP: eps[3].ip,
-				}},
-				Ports: []api.EndpointPort{{
-					Name: svcPortName.Port,
-					Port: int32(eps[3].port),
-				}},
-			}}
+			ept.Subsets = []api.EndpointSubset{
+				endPointSub[0],
+				endPointSub[1],
+				endPointSub[2],
+				endPointSub[3],
+				endPointSub[4],
+				endPointSub[5],
+				endPointSub[6],
+				endPointSub[7],
+			}
 		}),
 		makeTestEndpoints(svcPortName.Namespace, svcPortName.Name, func(ept *api.Endpoints) {
-			ept.Subsets = []api.EndpointSubset{{
-				Addresses: []api.EndpointAddress{{
-					IP: eps[4].ip,
-				}},
-				Ports: []api.EndpointPort{{
-					Name: svcPortName.Port,
-					Port: int32(eps[4].port),
-				}},
-			}}
+			ept.Subsets = []api.EndpointSubset{
+				endPointSub[0],
+				endPointSub[3],
+				endPointSub[4],
+				endPointSub[5],
+				endPointSub[6],
+				endPointSub[7],
+			}
 		}),
 		makeTestEndpoints(svcPortName.Namespace, svcPortName.Name, func(ept *api.Endpoints) {
-			ept.Subsets = []api.EndpointSubset{{
-				Addresses: []api.EndpointAddress{{
-					IP: eps[5].ip,
-				}},
-				Ports: []api.EndpointPort{{
-					Name: svcPortName.Port,
-					Port: int32(eps[5].port),
-				}},
-			}}
+			ept.Subsets = []api.EndpointSubset{
+				endPointSub[0],
+				endPointSub[1],
+				endPointSub[3],
+				endPointSub[4],
+				endPointSub[5],
+				endPointSub[7],
+			}
 		}),
 		makeTestEndpoints(svcPortName.Namespace, svcPortName.Name, func(ept *api.Endpoints) {
-			ept.Subsets = []api.EndpointSubset{{
-				Addresses: []api.EndpointAddress{{
-					IP: eps[6].ip,
-				}},
-				Ports: []api.EndpointPort{{
-					Name: svcPortName.Port,
-					Port: int32(eps[6].port),
-				}},
-			}}
+			ept.Subsets = []api.EndpointSubset{
+				endPointSub[0],
+				endPointSub[1],
+				endPointSub[2],
+				endPointSub[3],
+				endPointSub[4],
+				endPointSub[5],
+				endPointSub[7],
+			}
 		}),
 		makeTestEndpoints(svcPortName.Namespace, svcPortName.Name, func(ept *api.Endpoints) {
-			ept.Subsets = []api.EndpointSubset{{
-				Addresses: []api.EndpointAddress{{
-					IP: eps[7].ip,
-				}},
-				Ports: []api.EndpointPort{{
-					Name: svcPortName.Port,
-					Port: int32(eps[7].port),
-				}},
-			}}
+			ept.Subsets = []api.EndpointSubset{
+				endPointSub[1],
+				endPointSub[2],
+				endPointSub[3],
+				endPointSub[7],
+			}
+		}),
+		makeTestEndpoints(svcPortName.Namespace, svcPortName.Name, func(ept *api.Endpoints) {
+			ept.Subsets = []api.EndpointSubset{
+				endPointSub[0],
+				endPointSub[1],
+				endPointSub[2],
+				endPointSub[3],
+				endPointSub[7],
+			}
+		}),
+		makeTestEndpoints(svcPortName.Namespace, svcPortName.Name, func(ept *api.Endpoints) {
+			ept.Subsets = []api.EndpointSubset{
+				endPointSub[2],
+				endPointSub[3],
+				endPointSub[5],
+				endPointSub[6],
+			}
 		}),
 	}
 
-	endpointAddRemoveTest(t, fp, svcIP, svcPort, 1, endpoints[0])
-	endpointAddRemoveTest(t, fp, svcIP, svcPort, 2, endpoints[0], endpoints[1])
-	endpointAddRemoveTest(t, fp, svcIP, svcPort, 4, endpoints[0], endpoints[1], endpoints[2], endpoints[3])
-	endpointAddRemoveTest(t, fp, svcIP, svcPort, 8, endpoints[0], endpoints[1], endpoints[2], endpoints[3], endpoints[4], endpoints[5], endpoints[6], endpoints[7])
-	endpointAddRemoveTest(t, fp, svcIP, svcPort, 6, endpoints[0], endpoints[3], endpoints[4], endpoints[5], endpoints[6], endpoints[7])
-	endpointAddRemoveTest(t, fp, svcIP, svcPort, 6, endpoints[0], endpoints[1], endpoints[3], endpoints[4], endpoints[5], endpoints[7])
-	endpointAddRemoveTest(t, fp, svcIP, svcPort, 8, endpoints[0], endpoints[1], endpoints[2], endpoints[3], endpoints[4], endpoints[5], endpoints[6], endpoints[7])
-	endpointAddRemoveTest(t, fp, svcIP, svcPort, 7, endpoints[0], endpoints[1], endpoints[2], endpoints[3], endpoints[4], endpoints[5], endpoints[7])
-	endpointAddRemoveTest(t, fp, svcIP, svcPort, 8, endpoints[0], endpoints[1], endpoints[2], endpoints[3], endpoints[4], endpoints[5], endpoints[6], endpoints[7])
-	endpointAddRemoveTest(t, fp, svcIP, svcPort, 4, endpoints[1], endpoints[2], endpoints[3], endpoints[7])
-	endpointAddRemoveTest(t, fp, svcIP, svcPort, 5, endpoints[0], endpoints[1], endpoints[2], endpoints[3], endpoints[7])
-	endpointAddRemoveTest(t, fp, svcIP, svcPort, 8, endpoints[0], endpoints[1], endpoints[2], endpoints[3], endpoints[4], endpoints[5], endpoints[6], endpoints[7])
-	endpointAddRemoveTest(t, fp, svcIP, svcPort, 4, endpoints[2], endpoints[3], endpoints[5], endpoints[6])
+	fp.endpointsSynced = true
+	fp.servicesSynced  = true
+
+	fp.OnEndpointsAdd(endpoints[0])
+	endpointAddRemoveTest(t, 0,  fp, svcIP, svcPort, 1)
+
+	fp.OnEndpointsAdd(endpoints[1])
+	endpointAddRemoveTest(t, 1,  fp, svcIP, svcPort, 2)
+
+	fp.OnEndpointsUpdate(endpoints[1],endpoints[2])
+	endpointAddRemoveTest(t, 2,  fp, svcIP, svcPort, 4)
+
+	fp.OnEndpointsUpdate(endpoints[2],endpoints[3])
+	endpointAddRemoveTest(t, 3,  fp, svcIP, svcPort, 8)
+
+	fp.OnEndpointsUpdate(endpoints[3],endpoints[4])
+	endpointAddRemoveTest(t, 4,  fp, svcIP, svcPort, 6)
+
+	fp.OnEndpointsUpdate(endpoints[4],endpoints[5])
+	endpointAddRemoveTest(t, 5,  fp, svcIP, svcPort, 6)
+
+	fp.OnEndpointsUpdate(endpoints[5],endpoints[3])
+	endpointAddRemoveTest(t, 6,  fp, svcIP, svcPort, 8)
+
+	fp.OnEndpointsUpdate(endpoints[3],endpoints[6])
+	endpointAddRemoveTest(t, 7,  fp, svcIP, svcPort, 7)
+
+	fp.OnEndpointsUpdate(endpoints[6],endpoints[7])
+	endpointAddRemoveTest(t, 8,  fp, svcIP, svcPort, 4)
+
+	fp.OnEndpointsUpdate(endpoints[7],endpoints[8])
+	endpointAddRemoveTest(t, 9,  fp, svcIP, svcPort, 5)
+
+	fp.OnEndpointsDelete(endpoints[8])
+	endpointAddRemoveTest(t, 10, fp, svcIP, svcPort, 0)
+
+	fp.OnEndpointsAdd(endpoints[3])
+	endpointAddRemoveTest(t, 11, fp, svcIP, svcPort, 8)
+
+	fp.OnEndpointsUpdate(endpoints[3],endpoints[9])
+	endpointAddRemoveTest(t, 12, fp, svcIP, svcPort, 4)
 
 	endpointHasRule(t, fp, svcIP, svcPort, eps[2].ip, eps[2].port)
 	endpointHasRule(t, fp, svcIP, svcPort, eps[3].ip, eps[3].port)
@@ -697,15 +902,16 @@ func TestEndpointAddRemove (t *testing.T){
 	endpointHasNotRule(t, fp, svcIP, svcPort, eps[7].ip, eps[7].port)
 }
 
-func clusterIPBindUnBindTest(t *testing.T, fp *Proxier, expected int, allServices ...*api.Service){
-	fp.serviceMap = make(util.ProxyServiceMap)
-	makeServiceMap(fp,allServices...)
+func clusterIPBindUnBindTest(t *testing.T, caseNumber int, fp *Proxier, expected int){
+
+	fp.syncProxyRules()
+	// todo: double sync because unbind cluster ip can be done only after reset serviceChangeMap and endpointChangeMap
 	fp.syncProxyRules()
 	bindNumber, err := fp.checkBindNumber()
 	if err != nil{
-		t.Errorf("checkBindNumer failer: %v", err)
+		t.Errorf("caseNumber: %d, checkBindNumer failer: %v", caseNumber, err)
 	}else if bindNumber != expected{
-		t.Errorf("svcNumber: %d, expected: %d", bindNumber, expected)
+		t.Errorf("caseNumber: %d, svcNumber: %d, expected: %d", caseNumber, bindNumber, expected)
 	}
 }
 
@@ -733,15 +939,14 @@ func clusterIPHasNotBind(t *testing.T, fp *Proxier, ip string){
 	}
 }
 
-func serviceAddRemoveTest(t *testing.T, fp *Proxier, expected int, allServices ...*api.Service){
-	fp.serviceMap = make(util.ProxyServiceMap)
-	makeServiceMap(fp,allServices...)
+func serviceAddRemoveTest(t *testing.T, caseNumber int, fp *Proxier, expected int){
+
 	fp.syncProxyRules()
 	svcNumber, err := fp.checkSvcNumber()
 	if err != nil{
-		t.Errorf("checkSvcNumer failed: %v", err)
+		t.Errorf("caseNumber: %d, checkSvcNumer failed: %v", caseNumber, err)
 	}else if svcNumber != expected{
-		t.Errorf("svcNumber: %d, expected: %d", svcNumber, expected)
+		t.Errorf("caseNumber: %d, svcNumber: %d, expected: %d", caseNumber, svcNumber, expected)
 	}
 
 }
@@ -780,15 +985,14 @@ func serviceHasNotRule(t *testing.T, fp *Proxier, svcIP string, svcPort int) {
 	}
 }
 
-func endpointAddRemoveTest(t *testing.T, fp *Proxier, svcIP string, svcPort int, expected int, allEndpoints ...*api.Endpoints){
-	fp.endpointsMap = make(util.ProxyEndpointMap)
-	makeEndpointsMap(fp, allEndpoints...)
+func endpointAddRemoveTest(t *testing.T, caseNumber int, fp *Proxier, svcIP string, svcPort int, expected int){
+
 	fp.syncProxyRules()
 	epNumber, err := fp.checkEndpointNumber(svcIP, svcPort)
 	if err != nil{
-		t.Errorf("checkEpNumer failed: %v", err)
+		t.Errorf("caseNumber: %d, checkEpNumer failed: %v", caseNumber, err)
 	}else if epNumber != expected{
-		t.Errorf("epNumber: %d, expected: %d", epNumber, expected)
+		t.Errorf("caseNumber: %d, epNumber: %d, expected: %d", caseNumber, epNumber, expected)
 	}
 
 }

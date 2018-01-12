@@ -64,6 +64,7 @@ type EnnIpvs struct {
 }
 
 type Interface interface {
+	GetIpvsService(service *Service) (*libipvs.Service,error)
 	ListIpvsService() ([]*libipvs.Service,error)
 	ListIpvsServer(service *libipvs.Service) ([]*Server,error)
 	AddIpvsService(service *Service) error
@@ -96,6 +97,20 @@ func NewEnnIpvs() Interface{
 	return ei
 }
 
+func (ei *EnnIpvs) GetIpvsService(service *Service) (*libipvs.Service,error) {
+
+	svc, err:= CreateLibIpvsService(service)
+	if err != nil{
+		return nil, err
+	}
+
+	kernelSvc, err := ei.Ipvs_handle.GetService(svc)
+	if err != nil {
+		return nil, err
+	}
+
+	return kernelSvc, nil
+}
 
 func (ei *EnnIpvs) ListIpvsService() ([]*libipvs.Service,error) {
 

@@ -11,35 +11,59 @@ import (
 	"github.com/golang/glog"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
+	"k8s.io/client-go/tools/record"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
+	api "k8s.io/api/core/v1"
 
 	"kube-enn-proxy/app/options"
 	"kube-enn-proxy/pkg/proxy/ipvs"
 	"kube-enn-proxy/pkg/watchers"
+	"kube-enn-proxy/pkg/proxy/util"
+	proxyconfig "kube-enn-proxy/pkg/proxy/config"
 
 	utilipvs "kube-enn-proxy/pkg/util/ipvs"
 	//utiliptables "kube-enn-proxy/pkg/util/iptables"
 	utilexec "k8s.io/utils/exec"
 	//utildbus "kube-enn-proxy/pkg/util/dbus"
+	"k8s.io/client-go/informers"
+	"k8s.io/apimachinery/pkg/util/wait"
+	"fmt"
 )
 
 type EnnProxyServer struct {
 
-	Config	        *options.KubeEnnProxyConfig
-	Client          *kubernetes.Clientset
-	Proxier         *ipvs.Proxier
+	Config	               *options.KubeEnnProxyConfig
+	Client                 *kubernetes.Clientset
+	Proxier                *ipvs.Proxier
+	Recorder               record.EventRecorder
+	NodeRef                *api.ObjectReference
+
+	ConfigSyncPeriod       time.Duration
+	ServiceEventHandler    proxyconfig.ServiceHandler
+	EndpointsEventHandler  proxyconfig.EndpointsHandler
 
 }
 
 func NewEnnProxyServer(
-	config	*options.KubeEnnProxyConfig,
-	client  *kubernetes.Clientset,
-	proxier	*ipvs.Proxier,
+        config                 *options.KubeEnnProxyConfig,
+        client                 *kubernetes.Clientset,
+        proxier                *ipvs.Proxier,
+        recorder               record.EventRecorder,
+        nodeRef                *api.ObjectReference,
+        serviceEventHandler    proxyconfig.ServiceHandler,
+        endpointsEventHandler  proxyconfig.EndpointsHandler,
 
 ) (*EnnProxyServer, error){
 	return  &EnnProxyServer{
-		Config:		config,
-		Client:         client,
-		Proxier:	proxier,
+		Config:		       config,
+		Client:                client,
+		Proxier:	       proxier,
+		Recorder:              recorder,
+		NodeRef:               nodeRef,
+		ConfigSyncPeriod:      config.ConfigSyncPeriod,
+		ServiceEventHandler:   serviceEventHandler,
+		EndpointsEventHandler: endpointsEventHandler,
 	},nil
 }
 
@@ -77,6 +101,27 @@ func NewEnnProxyServerDefault(config *options.KubeEnnProxyConfig) (*EnnProxyServ
 	//dbus = utildbus.New()
 	//iptInterface = utiliptables.New(execer, dbus, protocol)
 
+	node, err := util.GetNode(clientset,config.HostnameOverride)
+	if err != nil{
+		return nil, fmt.Errorf("NewProxier failure: GetNode fall: %s", err.Error())
+	}
+	hostname := node.Name
+
+	nodeIP, err := util.InternalGetNodeHostIP(node)
+	if err != nil{
+		return nil, fmt.Errorf("NewProxier failure: GetNodeIP fall: %s", err.Error())
+	}
+
+	eventBroadcaster := record.NewBroadcaster()
+	scheme := runtime.NewScheme()
+	recorder := eventBroadcaster.NewRecorder(scheme,api.EventSource{Component: "kube-proxy", Host: hostname})
+
+	nodeRef := &api.ObjectReference{
+		Kind:      "Node",
+		Name:      hostname,
+		UID:       types.UID(hostname),
+		Namespace: "",
+	}
 
 	err = tryIPVSProxy()
 	if(err != nil){
@@ -88,19 +133,36 @@ func NewEnnProxyServerDefault(config *options.KubeEnnProxyConfig) (*EnnProxyServ
 		config,
 		ipvsInterface,
 		execerInterface,
+		hostname,
+		nodeIP,
+		recorder,
 	)
 	if(err != nil){
 		return nil, err
 	}
 
-	err = createWatcher(clientset, config.ConfigSyncPeriod)
-	if(err != nil){
-		return nil, err
-	}
-	watchers.EndpointsWatchConfig.RegisterHandler(proxier)
-	watchers.ServiceWatchConfig.RegisterHandler(proxier)
+//	err = createWatcher(clientset, config.ConfigSyncPeriod)
+//	if(err != nil){
+//		return nil, err
+//	}
+//	watchers.EndpointsWatchConfig.RegisterHandler(proxier)
+//	watchers.ServiceWatchConfig.RegisterHandler(proxier)
 
-	return NewEnnProxyServer(config, clientset, proxier)
+	var serviceEventHandler proxyconfig.ServiceHandler
+	var endpointsEventHandler proxyconfig.EndpointsHandler
+
+	serviceEventHandler = proxier
+	endpointsEventHandler = proxier
+
+	return NewEnnProxyServer(
+		config,
+		clientset,
+		proxier,
+		recorder,
+		nodeRef,
+		serviceEventHandler,
+		endpointsEventHandler,
+	)
 
 }
 
@@ -151,11 +213,36 @@ func CleanUpAndExit() {
 	proxier.CleanupLeftovers()
 }
 
+func (s *EnnProxyServer) birthCry() {
+	s.Recorder.Eventf(s.NodeRef, api.EventTypeNormal, "Starting", "Starting kube-proxy.")
+}
+
 func (s *EnnProxyServer) Run() error{
 
 	glog.V(0).Infof("start run enn proxy")
 	var StopCh chan struct{}
 	var wg sync.WaitGroup
+
+	informerFactory := informers.NewSharedInformerFactory(s.Client, s.ConfigSyncPeriod)
+
+	// Create configs (i.e. Watches for Services and Endpoints)
+	// Note: RegisterHandler() calls need to happen before creation of Sources because sources
+	// only notify on changes, and the initial update (on process start) may be lost if no handlers
+	// are registered yet.
+	serviceConfig := proxyconfig.NewServiceConfig(informerFactory.Core().V1().Services(), s.ConfigSyncPeriod)
+	serviceConfig.RegisterEventHandler(s.ServiceEventHandler)
+	go serviceConfig.Run(wait.NeverStop)
+
+	endpointsConfig := proxyconfig.NewEndpointsConfig(informerFactory.Core().V1().Endpoints(), s.ConfigSyncPeriod)
+	endpointsConfig.RegisterEventHandler(s.EndpointsEventHandler)
+	go endpointsConfig.Run(wait.NeverStop)
+
+	// This has to start after the calls to NewServiceConfig and NewEndpointsConfig because those
+	// functions must configure their shared informer event handlers first.
+	go informerFactory.Start(wait.NeverStop)
+
+	// Birth Cry after the birth is successful
+	s.birthCry()
 
 	StopCh = make(chan struct{})
 
