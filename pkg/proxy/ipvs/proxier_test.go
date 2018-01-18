@@ -572,8 +572,8 @@ func TestBuildServiceMapServiceUpdate(t *testing.T) {
 	servicev1 := makeTestService("somewhere", "some-service", func(svc *api.Service) {
 		svc.Spec.Type = api.ServiceTypeClusterIP
 		svc.Spec.ClusterIP = "100.16.55.4"
-		svc.Spec.Ports = addTestPort(svc.Spec.Ports, "something", "TCP", 1234, 0, 0)
-		svc.Spec.Ports = addTestPort(svc.Spec.Ports, "somethingelse", "TCP", 1235, 0, 0)
+		svc.Spec.Ports = addTestPort(svc.Spec.Ports, "something1", "TCP", 1234, 0, 0)
+		svc.Spec.Ports = addTestPort(svc.Spec.Ports, "something2", "TCP", 1235, 0, 0)
 	})
 	servicev2 := makeTestService("somewhere", "some-service", func(svc *api.Service) {
 		svc.Spec.Type = api.ServiceTypeClusterIP
@@ -586,14 +586,71 @@ func TestBuildServiceMapServiceUpdate(t *testing.T) {
 	servicev3 := makeTestService("somewhere", "some-service", func(svc *api.Service) {
 		svc.Spec.Type = api.ServiceTypeNodePort
 		svc.Spec.ClusterIP = "100.16.55.4"
-		svc.Spec.Ports = addTestPort(svc.Spec.Ports, "something", "TCP", 1234, 4321, 0)
-		svc.Spec.Ports = addTestPort(svc.Spec.Ports, "somethingelse", "TCP", 1235, 5321, 0)
+		svc.Spec.Ports = addTestPort(svc.Spec.Ports, "something1", "TCP", 1234, 4321, 0)
+		svc.Spec.Ports = addTestPort(svc.Spec.Ports, "something2", "TCP", 1235, 5321, 0)
+		svc.Spec.Ports = addTestPort(svc.Spec.Ports, "something3", "TCP", 1236, 6321, 0)
+	})
+
+	endpoint1 := makeTestEndpoints("somewhere", "some-service", func(ept *api.Endpoints) {
+		ept.Subsets = []api.EndpointSubset{
+			{
+				Addresses: []api.EndpointAddress{{
+					IP: "1.1.1.1",
+				}},
+				Ports: []api.EndpointPort{{
+					Name: "something1",
+					Port: 11,
+				}},
+			},
+			{
+				Addresses: []api.EndpointAddress{{
+					IP: "1.1.1.1",
+				}},
+				Ports: []api.EndpointPort{{
+					Name: "something2",
+					Port: 11,
+				}},
+			},
+		}
+	})
+
+	endpoint2 := makeTestEndpoints("somewhere", "some-service", func(ept *api.Endpoints) {
+		ept.Subsets = []api.EndpointSubset{
+			{
+				Addresses: []api.EndpointAddress{{
+					IP: "1.1.1.1",
+				}},
+				Ports: []api.EndpointPort{{
+					Name: "something1",
+					Port: 11,
+				}},
+			},
+			{
+				Addresses: []api.EndpointAddress{{
+					IP: "1.1.1.1",
+				}},
+				Ports: []api.EndpointPort{{
+					Name: "something2",
+					Port: 11,
+				}},
+			},
+			{
+				Addresses: []api.EndpointAddress{{
+					IP: "1.1.1.1",
+				}},
+				Ports: []api.EndpointPort{{
+					Name: "something3",
+					Port: 11,
+				}},
+			},
+		}
 	})
 
 	fp.endpointsSynced = true
 	fp.servicesSynced  = true
 
 	fp.OnServiceAdd(servicev1)
+	fp.OnEndpointsAdd(endpoint1)
 	fp.syncProxyRules()
 	if len(fp.serviceMap) != 2 {
 		t.Errorf("expected service map length 2, got %v", fp.serviceMap)
@@ -605,8 +662,11 @@ func TestBuildServiceMapServiceUpdate(t *testing.T) {
 	}else if svcNumber != expected{
 		t.Errorf("svcNumber: %d, expected: %d", svcNumber, expected)
 	}
+	endpointHasRule(t, fp, "100.16.55.4", 1234, "1.1.1.1", 11)
+	endpointHasRule(t, fp, "100.16.55.4", 1235, "1.1.1.1", 11)
 
 	fp.OnServiceUpdate(servicev1, servicev2)
+	fp.OnEndpointsUpdate(endpoint1,endpoint2)
 	fp.syncProxyRules()
 	if len(fp.serviceMap) != 3 {
 		t.Errorf("expected service map length 2, got %v", fp.serviceMap)
@@ -618,6 +678,9 @@ func TestBuildServiceMapServiceUpdate(t *testing.T) {
 	}else if svcNumber != expected{
 		t.Errorf("svcNumber: %d, expected: %d", svcNumber, expected)
 	}
+	endpointHasRule(t, fp, "100.16.55.4", 1234, "1.1.1.1", 11)
+	endpointHasRule(t, fp, "100.16.55.4", 1235, "1.1.1.1", 11)
+	endpointHasRule(t, fp, "100.16.55.4", 1236, "1.1.1.1", 11)
 
 	fp.OnServiceUpdate(servicev2, servicev2)
 	fp.syncProxyRules()
@@ -631,19 +694,28 @@ func TestBuildServiceMapServiceUpdate(t *testing.T) {
 	}else if svcNumber != expected{
 		t.Errorf("svcNumber: %d, expected: %d", svcNumber, expected)
 	}
+	endpointHasRule(t, fp, "100.16.55.4", 1234, "1.1.1.1", 11)
+	endpointHasRule(t, fp, "100.16.55.4", 1235, "1.1.1.1", 11)
+	endpointHasRule(t, fp, "100.16.55.4", 1236, "1.1.1.1", 11)
 
 	fp.OnServiceUpdate(servicev2, servicev3)
 	fp.syncProxyRules()
-	if len(fp.serviceMap) != 2 {
+	if len(fp.serviceMap) != 3 {
 		t.Errorf("expected service map length 2, got %v", fp.serviceMap)
 	}
 	svcNumber, err = fp.checkSvcNumber()
-	expected = 4
+	expected = 6
 	if err != nil{
 		t.Errorf("checkSvcNumer failed: %v", err)
 	}else if svcNumber != expected{
 		t.Errorf("svcNumber: %d, expected: %d", svcNumber, expected)
 	}
+	endpointHasRule(t, fp, "100.16.55.4", 1234, "1.1.1.1", 11)
+	endpointHasRule(t, fp, "100.16.55.4", 1235, "1.1.1.1", 11)
+	endpointHasRule(t, fp, "100.16.55.4", 1236, "1.1.1.1", 11)
+	endpointHasRule(t, fp, "100.101.102.103", 4321, "1.1.1.1", 11)
+	endpointHasRule(t, fp, "100.101.102.103", 5321, "1.1.1.1", 11)
+	endpointHasRule(t, fp, "100.101.102.103", 6321, "1.1.1.1", 11)
 
 }
 
@@ -1000,11 +1072,11 @@ func endpointAddRemoveTest(t *testing.T, caseNumber int, fp *Proxier, svcIP stri
 func endpointHasRule(t *testing.T, fp *Proxier, svcIP string, svcPort int, epIP string, epPort int){
 	check, err := fp.hasRuleDestination(svcIP, svcPort, epIP, epPort)
 	if err != nil{
-		t.Errorf("failed find rule %v", err)
+		t.Errorf("svc %s:%d failed find rule %v", svcIP, svcPort, err)
 		return
 	}
 	if !check{
-		t.Errorf("failed find rule %v", err)
+		t.Errorf("svc %s:%d failed find rule %v", svcIP, svcPort, err)
 		return
 	}
 }

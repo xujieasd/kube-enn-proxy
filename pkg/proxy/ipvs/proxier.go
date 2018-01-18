@@ -623,6 +623,12 @@ func (proxier *Proxier) syncProxyRules(){
 				// add new services
 				protocol := strings.ToLower(serviceInfo.Protocol)
 
+				// if we have same svcName in previous map means serviceMap is updated
+				// we need to update new ipvs svc rule (first delete old ipvs svc rule then add new ipvs svc rule),
+				// However if we don't change endpoints endpointMap will not be changed,
+				// so we also need to sync endpoint rules in this situation
+				_, updateSvc := change.Previous[svcName]
+
 				/* capture cluster ip */
 				ipvs_cluster_service := &utilipvs.Service{
 					ClusterIP:       serviceInfo.ClusterIP,
@@ -642,10 +648,12 @@ func (proxier *Proxier) syncProxyRules(){
 					continue
 				}
 
-				activeBindIP[ipvs_cluster_service.ClusterIP.String()] = 1
-
 				err := proxier.CreateServiceRule(false, ipvs_cluster_service)
-				if err != nil {
+				if err == nil{
+					if updateSvc{
+						proxier.syncEndpointChange(serviceInfo.ClusterIP, serviceInfo.Port, serviceInfo, svcName)
+					}
+				}else{
 					glog.Errorf("syncProxyRules: add ipvs cluster service feild: %s",err)
 				}
 
@@ -696,10 +704,16 @@ func (proxier *Proxier) syncProxyRules(){
 
 					}
 
-					err := proxier.CreateServiceRule(false,ipvs_externalIp_service)
-					if err != nil{
+					err := proxier.CreateServiceRule(false, ipvs_externalIp_service)
+					if err == nil{
+						if updateSvc{
+							ip := net.ParseIP(externalIP)
+							proxier.syncEndpointChange(ip, serviceInfo.Port, serviceInfo, svcName)
+						}
+					}else{
 						glog.Errorf("syncProxyRules: add ipvs cluster service feild: %s",err)
 					}
+
 				}
 
 
@@ -742,8 +756,12 @@ func (proxier *Proxier) syncProxyRules(){
 								SessionAffinity:  serviceInfo.SessionAffinity,
 							}
 
-							err := proxier.CreateServiceRule(false,ipvs_node_service)
-							if err != nil{
+							err := proxier.CreateServiceRule(false, ipvs_node_service)
+							if err == nil{
+								if updateSvc{
+									proxier.syncEndpointChange(nodeIP, serviceInfo.NodePort, serviceInfo, svcName)
+								}
+							}else{
 								glog.Errorf("syncProxyRules: add ipvs cluster service feild: %s",err)
 							}
 						}
@@ -768,6 +786,7 @@ func (proxier *Proxier) syncProxyRules(){
 
 				_, ok := change.Current[svcName]
 				if ok{
+					// update endpoint so do not need to sync endpoint rule in previous map
 					glog.V(6).Infof("skip sync endpoint previous map for %q, sync in current map", svcName)
 					continue
 				}
@@ -897,14 +916,36 @@ func (proxier *Proxier) syncEndpointChange(ClusterIP net.IP, Port int, serviceIn
 		SessionAffinity: serviceInfo.SessionAffinity,
 
 	}
+	//	clusterKey := activeServiceKey{
+	//		ip:       ipvs_cluster_service.ClusterIP.String(),
+	//		port:     ipvs_cluster_service.Port,
+	//		protocol: ipvs_cluster_service.Protocol,
+	//	}
+	//
+	//	KernelEndpoints, _ := proxier.kernelIpvsMap[clusterKey]
 
-	clusterKey := activeServiceKey{
-		ip:       ipvs_cluster_service.ClusterIP.String(),
-		port:     ipvs_cluster_service.Port,
-		protocol: ipvs_cluster_service.Protocol,
+	kernelSvc, err := proxier.ipvsInterface.GetIpvsService(ipvs_cluster_service)
+	if err != nil{
+		glog.Errorf("syncEndpointChange: get kernel ipvs Service %s:%d fail %v \n",ipvs_cluster_service.ClusterIP.String(),ipvs_cluster_service.Port,err)
+		return
 	}
 
-	KernelEndpoints, _ := proxier.kernelIpvsMap[clusterKey]
+	KernelEndpoints := make([]activeServiceValue,0)
+
+	ipvsDsts, err := proxier.ipvsInterface.ListIpvsServer(kernelSvc)
+
+	if err != nil{
+		glog.Errorf("syncEndpointChange: list destination of Service %s:%d fail %v \n",kernelSvc.Address.String(),int(kernelSvc.Port),err)
+		return
+	}
+	for _, ipvsDst := range ipvsDsts {
+		endpointValue := activeServiceValue{
+			ip:    ipvsDst.Ip,
+			port:  ipvsDst.Port,
+		}
+
+		KernelEndpoints= append(KernelEndpoints,endpointValue)
+	}
 
 	proxier.CreateEndpointRule(ipvs_cluster_service,svcName,KernelEndpoints)
 }

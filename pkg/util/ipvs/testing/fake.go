@@ -110,7 +110,6 @@ func (f *Faker) AddIpvsService(service *utilipvs.Service) error{
 		protocol: service.Protocol,
 	}
 
-	fmt.Printf("add ipvssvc %s:%d\n",key.ip,key.port)
 	_, ok := f.IpvsMap[key]
 	if ok{
 		return nil
@@ -129,7 +128,6 @@ func (f *Faker) DeleteIpvsService(service *utilipvs.Service) error{
 		port:     service.Port,
 		protocol: service.Protocol,
 	}
-	fmt.Printf("del ipvssvc %s:%d\n",key.ip,key.port)
 	delete(f.IpvsMap,key)
 	return nil
 }
